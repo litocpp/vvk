@@ -16,6 +16,7 @@ export {
     using ::VkBindImageMemoryInfo;
     using ::VkBindImagePlaneMemoryInfo;
     using ::VkBool32;
+    using ::VkBorderColor;
     using ::VkBuffer;
     using ::VkBufferCopy;
     using ::VkBufferCreateInfo;
@@ -35,6 +36,7 @@ export {
     using ::VkCommandBufferResetFlags;
     using ::VkCommandPool;
     using ::VkCommandPoolCreateInfo;
+    using ::VkCompareOp;
     using ::VkComponentSwizzle;
     using ::VkCompositeAlphaFlagBitsKHR;
     using ::VkComputePipelineCreateInfo;
@@ -80,6 +82,7 @@ export {
     using ::VkFilter;
     using ::VkFlags;
     using ::VkFormat;
+    using ::VkFormatFeatureFlags;
     using ::VkFormatProperties;
     using ::VkFramebuffer;
     using ::VkFramebufferCreateInfo;
@@ -232,6 +235,8 @@ export {
     using ::VK_BLEND_FACTOR_SRC_ALPHA;
     using ::VK_BLEND_FACTOR_ZERO;
     using ::VK_BLEND_OP_ADD;
+    using ::VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
+    using ::VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
     using ::VK_BORDER_COLOR_INT_OPAQUE_BLACK;
     using ::VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
     using ::VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
@@ -249,8 +254,14 @@ export {
     using ::VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     using ::VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
     using ::VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+    using ::VK_COMPARE_OP_ALWAYS;
+    using ::VK_COMPARE_OP_EQUAL;
+    using ::VK_COMPARE_OP_GREATER;
+    using ::VK_COMPARE_OP_GREATER_OR_EQUAL;
+    using ::VK_COMPARE_OP_LESS;
     using ::VK_COMPARE_OP_LESS_OR_EQUAL;
     using ::VK_COMPARE_OP_NEVER;
+    using ::VK_COMPARE_OP_NOT_EQUAL;
     using ::VK_COMPONENT_SWIZZLE_IDENTITY;
     using ::VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
     using ::VK_CULL_MODE_BACK_BIT;
@@ -291,6 +302,9 @@ export {
     using ::VK_FORMAT_BC2_UNORM_BLOCK;
     using ::VK_FORMAT_BC3_UNORM_BLOCK;
     using ::VK_FORMAT_D32_SFLOAT;
+    using ::VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT;
+    using ::VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT;
+    using ::VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
     using ::VK_FORMAT_G8_B8R8_2PLANE_420_UNORM;
     using ::VK_FORMAT_R16_UNORM;
     using ::VK_FORMAT_R16G16_UNORM;

@@ -552,6 +552,12 @@ void PhysicalDevice::GetFeatures2KHR(VkPhysicalDeviceFeatures2KHR& feats) const 
     dld->vkGetPhysicalDeviceFeatures2(handle, &feats);
 }
 
+VkFormatProperties PhysicalDevice::GetFormatProperties(VkFormat format) const noexcept {
+    VkFormatProperties properties {};
+    dld->vkGetPhysicalDeviceFormatProperties(handle, format, &properties);
+    return properties;
+}
+
 VkResult PhysicalDevice::EnumerateDeviceExtensionProperties(
     rstd::vec::Vec<VkExtensionProperties>& properties) const {
     rstd::uint32_t num;
