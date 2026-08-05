@@ -29,15 +29,15 @@ private-options = [
 ]
 
 [dependencies.rstd-std]
-path = "../rstd"
+git = "https://github.com/litocpp/rstd.git"
 visibility = "public"
 
 [dependencies.rstd-cppstd]
-path = "../rstd"
+git = "https://github.com/litocpp/rstd.git"
 visibility = "public"
 
 [dependencies.rstd-log]
-path = "../rstd"
+git = "https://github.com/litocpp/rstd.git"
 visibility = "private"
 
 [dependencies.vvk-vulkan]
