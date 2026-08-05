@@ -1,0 +1,39 @@
+[package]
+name = "vvk-vma"
+version = "0.1.0"
+module = "vma"
+
+[library]
+archive = "vvk_ffi_vma"
+discovery = "explicit"
+sources = [
+  "vma.cppm",
+  "vma.cpp",
+]
+
+[usage]
+private-options = [
+  "-fPIC",
+  "-fsized-deallocation",
+  "-Wno-nullability-completeness",
+  "-Wno-nullability-extension",
+  "-Wno-unused-private-field",
+  "-Wno-unused-parameter",
+  "-Wno-unused-variable",
+]
+
+[dependencies.vvk-vulkan]
+path = "../vulkan"
+visibility = "public"
+
+[dependencies.vma]
+cmake = "VulkanMemoryAllocator"
+target = "GPUOpen::VulkanMemoryAllocator"
+git = "https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git"
+rev = "3aa921224c154a0d2c43912bc88e1c42ce1f7607"
+cmake-cache = {
+  VMA_BUILD_DOCUMENTATION = false,
+  VMA_BUILD_SAMPLES = false,
+  VMA_ENABLE_INSTALL = true,
+}
+visibility = "public"

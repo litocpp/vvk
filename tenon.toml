@@ -1,0 +1,49 @@
+[package]
+name = "vvk"
+version = "0.1.0"
+module = "vvk"
+
+[library]
+archive = "vvk"
+discovery = "explicit"
+sources = [
+  "src/vvk.cppm",
+  "src/handle.cppm",
+  "src/vma.cppm",
+  "src/dispatch.cppm",
+  "src/objects.cppm",
+  "src/completion.cppm",
+  "src/descriptor.cppm",
+  "src/vvk.cpp",
+]
+
+[usage]
+public-include-directories = ["include"]
+private-options = [
+  "-fPIC",
+  "-fsized-deallocation",
+  "-Wall",
+  "-Wextra",
+  "-Wpedantic",
+  "-Wno-missing-field-initializers",
+]
+
+[dependencies.rstd-std]
+path = "../rstd"
+visibility = "public"
+
+[dependencies.rstd-cppstd]
+path = "../rstd"
+visibility = "public"
+
+[dependencies.rstd-log]
+path = "../rstd"
+visibility = "private"
+
+[dependencies.vvk-vulkan]
+path = "src/ffi/vulkan"
+visibility = "public"
+
+[dependencies.vvk-vma]
+path = "src/ffi/vma"
+visibility = "public"

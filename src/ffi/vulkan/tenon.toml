@@ -1,0 +1,29 @@
+[package]
+name = "vvk-vulkan"
+version = "0.1.0"
+module = "vulkan"
+
+[library]
+archive = "vvk_ffi_vulkan"
+discovery = "explicit"
+sources = [
+  "vulkan.cppm",
+  "constants.cppm",
+  "types.cppm",
+  "functions.cppm",
+]
+
+[usage]
+private-options = [
+  "-fPIC",
+  "-fsized-deallocation",
+  "-Wall",
+  "-Wextra",
+  "-Wpedantic",
+  "-Wno-missing-field-initializers",
+]
+
+[dependencies.vulkan]
+cmake = "Vulkan"
+target = "Vulkan::Vulkan"
+visibility = "public"
