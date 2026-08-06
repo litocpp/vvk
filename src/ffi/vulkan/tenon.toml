@@ -23,7 +23,6 @@ private-options = [
   "-Wno-missing-field-initializers",
 ]
 
-[dependencies.vulkan]
-cmake = "Vulkan"
-target = "Vulkan::Vulkan"
-visibility = "public"
+[external-dependencies.cmake.vulkan]
+find-package = "Vulkan"
+targets = [{ name = "Vulkan::Vulkan", visibility = "public" }]

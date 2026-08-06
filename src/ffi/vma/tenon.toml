@@ -26,14 +26,13 @@ private-options = [
 path = "../vulkan"
 visibility = "public"
 
-[dependencies.vma]
-cmake = "VulkanMemoryAllocator"
-target = "GPUOpen::VulkanMemoryAllocator"
+[external-dependencies.cmake.vma]
+find-package = "VulkanMemoryAllocator"
 git = "https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git"
 rev = "3aa921224c154a0d2c43912bc88e1c42ce1f7607"
-cmake-cache = {
+cache = {
   VMA_BUILD_DOCUMENTATION = false,
   VMA_BUILD_SAMPLES = false,
   VMA_ENABLE_INSTALL = true,
 }
-visibility = "public"
+targets = [{ name = "GPUOpen::VulkanMemoryAllocator", visibility = "public" }]
