@@ -138,6 +138,7 @@ export {
     using ::VkPhysicalDeviceProperties2;
     using ::VkPhysicalDeviceProperties2KHR;
     using ::VkPhysicalDevicePushDescriptorPropertiesKHR;
+    using ::VkPhysicalDeviceSamplerYcbcrConversionFeatures;
     using ::VkPhysicalDeviceSynchronization2FeaturesKHR;
     using ::VkPhysicalDeviceTimelineSemaphoreFeaturesKHR;
     using ::VkPhysicalDeviceVulkan12Features;
@@ -411,6 +412,7 @@ export {
     using ::VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
     using ::VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2_KHR;
     using ::VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PUSH_DESCRIPTOR_PROPERTIES_KHR;
+    using ::VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SAMPLER_YCBCR_CONVERSION_FEATURES;
     using ::VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES_KHR;
     using ::VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES_KHR;
     using ::VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
