@@ -1,32 +1,15 @@
 [package]
 name = "vvk"
 version = "0.1.0"
-module = "vvk"
 
-[library]
+[lib]
+name = "vvk"
+module = "vvk"
 archive = "vvk"
-discovery = "explicit"
-sources = [
-  "src/vvk.cppm",
-  "src/handle.cppm",
-  "src/vma.cppm",
-  "src/dispatch.cppm",
-  "src/objects.cppm",
-  "src/completion.cppm",
-  "src/descriptor.cppm",
-  "src/vvk.cpp",
-]
+discovery = "module"
 
 [usage]
 public-include-directories = ["include"]
-private-options = [
-  "-fPIC",
-  "-fsized-deallocation",
-  "-Wall",
-  "-Wextra",
-  "-Wpedantic",
-  "-Wno-missing-field-initializers",
-]
 
 [dependencies.rstd-std]
 git = "https://github.com/litocpp/rstd.git"
@@ -40,10 +23,17 @@ visibility = "public"
 git = "https://github.com/litocpp/rstd.git"
 visibility = "private"
 
-[dependencies.vvk-vulkan]
-path = "src/ffi/vulkan"
-visibility = "public"
+[external-dependencies.cmake.vulkan]
+find-package = "Vulkan"
+targets = [{ name = "Vulkan::Vulkan", visibility = "public" }]
 
-[dependencies.vvk-vma]
-path = "src/ffi/vma"
-visibility = "public"
+[external-dependencies.cmake.vma]
+find-package = "VulkanMemoryAllocator"
+git = "https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git"
+rev = "3aa921224c154a0d2c43912bc88e1c42ce1f7607"
+cache = {
+  VMA_BUILD_DOCUMENTATION = false,
+  VMA_BUILD_SAMPLES = false,
+  VMA_ENABLE_INSTALL = true,
+}
+targets = [{ name = "GPUOpen::VulkanMemoryAllocator", visibility = "public" }]

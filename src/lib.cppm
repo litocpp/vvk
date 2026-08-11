@@ -1,6 +1,6 @@
 export module vvk;
 
-export import vulkan;
+export import :ffi.vulkan;
 export import :handle;
 export import :vma;
 export import :dispatch;

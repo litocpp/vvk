@@ -5,7 +5,7 @@ module;
 export module vvk:objects;
 
 import rstd;
-import vulkan;
+import :ffi.vulkan;
 import :handle;
 import :dispatch;
 

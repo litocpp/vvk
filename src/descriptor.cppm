@@ -1,7 +1,7 @@
 export module vvk:descriptor;
 
 import rstd;
-import vulkan;
+import :ffi.vulkan;
 
 using namespace rstd::prelude;
 

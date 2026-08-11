@@ -113,7 +113,7 @@ struct NullHandle {
 #undef VK_NULL_HANDLE
 #undef VK_MAKE_VERSION
 
-export module vulkan:constants;
+export module vvk:ffi.vulkan.constants;
 
 export {
     // ---- captured macros ----

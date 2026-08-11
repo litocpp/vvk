@@ -2,7 +2,7 @@ module;
 
 #include <vulkan/vulkan.h>
 
-export module vulkan:types;
+export module vvk:ffi.vulkan.types;
 
 export {
     // ---- handle types, struct types, enums, flags ----

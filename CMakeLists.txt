@@ -65,10 +65,10 @@ if(NOT TARGET GPUOpen::VulkanMemoryAllocator)
     FetchContent_MakeAvailable(vma)
 endif()
 
-add_subdirectory(src/ffi/vulkan)
-add_subdirectory(src/ffi/vma)
-
-add_library(vvk STATIC src/vvk.cpp)
+add_library(vvk STATIC
+    src/lib.cpp
+    src/ffi/vma/mod.cpp
+)
 add_library(vvk::vvk ALIAS vvk)
 
 target_compile_features(vvk PUBLIC cxx_std_20)
@@ -80,13 +80,18 @@ target_compile_options(vvk PRIVATE
 )
 target_sources(vvk
     PUBLIC FILE_SET CXX_MODULES FILES
-        src/vvk.cppm
+        src/lib.cppm
         src/handle.cppm
         src/vma.cppm
         src/dispatch.cppm
         src/objects.cppm
         src/completion.cppm
         src/descriptor.cppm
+        src/ffi/vulkan/mod.cppm
+        src/ffi/vulkan/constants.cppm
+        src/ffi/vulkan/types.cppm
+        src/ffi/vulkan/functions.cppm
+        src/ffi/vma/mod.cppm
     PUBLIC FILE_SET public_headers TYPE HEADERS
         BASE_DIRS include
         FILES include/vvk/macros.hpp
@@ -95,8 +100,8 @@ target_link_libraries(vvk
     PUBLIC
         rstd::rstd
         rstd.cppstd
-        vvk::ffi::vulkan
-        vvk::ffi::vma
+        Vulkan::Vulkan
+        GPUOpen::VulkanMemoryAllocator
     PRIVATE
         rstd.log
 )

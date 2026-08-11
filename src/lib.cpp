@@ -5,7 +5,7 @@ module;
 module vvk;
 import rstd.log;
 import rstd;
-import vulkan;
+import :ffi.vulkan;
 
 using namespace rstd::prelude;
 

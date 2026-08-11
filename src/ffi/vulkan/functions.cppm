@@ -2,7 +2,7 @@ module;
 
 #include <vulkan/vulkan.h>
 
-export module vulkan:functions;
+export module vvk:ffi.vulkan.functions;
 
 export {
     // ---- functions (loadable directly when not using VK_NO_PROTOTYPES) ----

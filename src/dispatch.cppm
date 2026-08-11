@@ -6,7 +6,7 @@ export module vvk:dispatch;
 
 import rstd;
 import rstd.log;
-import vulkan;
+import :ffi.vulkan;
 import :handle;
 
 using namespace rstd::prelude;

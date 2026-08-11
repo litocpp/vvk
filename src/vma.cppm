@@ -2,7 +2,7 @@ export module vvk:vma;
 
 import rstd.cppstd;
 import :handle;
-export import vma;
+export import :ffi.vma;
 
 export namespace vvk
 {

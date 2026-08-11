@@ -5,9 +5,9 @@ module;
 #define VMA_VULKAN_HEADERS_ALREADY_INCLUDED 1
 #include <vk_mem_alloc.h>
 
-export module vma;
+export module vvk:ffi.vma;
 
-export import vulkan;
+export import :ffi.vulkan;
 
 export using ::VMA_MEMORY_USAGE_CPU_ONLY;
 export using ::VMA_MEMORY_USAGE_GPU_ONLY;
