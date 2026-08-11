@@ -1,6 +1,12 @@
 module;
 
+#define VK_ACCESS_2_SHADER_SAMPLED_READ_BIT vvk_header_access_2_shader_sampled_read_bit
+#define VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT vvk_header_pipeline_stage_2_all_commands_bit
+#define VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT vvk_header_pipeline_stage_2_compute_shader_bit
 #include <vulkan/vulkan.h>
+#undef VK_ACCESS_2_SHADER_SAMPLED_READ_BIT
+#undef VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT
+#undef VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT
 
 export module vvk:ffi.vulkan.types;
 
@@ -8,6 +14,7 @@ export {
     // ---- handle types, struct types, enums, flags ----
 
     using ::VkAccessFlags;
+    using ::VkAccessFlags2;
     using ::VkAllocationCallbacks;
     using ::VkApplicationInfo;
     using ::VkAttachmentDescription;
@@ -89,12 +96,14 @@ export {
     using ::VkFramebufferCreateInfo;
     using ::VkGraphicsPipelineCreateInfo;
     using ::VkImage;
+    using ::VkImageAspectFlagBits;
     using ::VkImageAspectFlags;
     using ::VkImageBlit;
     using ::VkImageCopy;
     using ::VkImageCreateInfo;
     using ::VkImageDrmFormatModifierExplicitCreateInfoEXT;
     using ::VkImageDrmFormatModifierPropertiesEXT;
+    using ::VkImageFormatListCreateInfo;
     using ::VkImageLayout;
     using ::VkImageMemoryBarrier;
     using ::VkImageMemoryBarrier2;
@@ -110,6 +119,7 @@ export {
     using ::VkImageView;
     using ::VkImageViewCreateInfo;
     using ::VkImageViewType;
+    using ::VkImageViewUsageCreateInfo;
     using ::VkImportMemoryFdInfoKHR;
     using ::VkIndexType;
     using ::VkInstance;
@@ -213,6 +223,13 @@ export {
     using ::VkWriteDescriptorSet;
 
     // ---- enumerator constants ----
+
+    inline constexpr auto VK_ACCESS_2_SHADER_SAMPLED_READ_BIT =
+        vvk_header_access_2_shader_sampled_read_bit;
+    inline constexpr auto VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT =
+        vvk_header_pipeline_stage_2_all_commands_bit;
+    inline constexpr auto VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT =
+        vvk_header_pipeline_stage_2_compute_shader_bit;
 
     using ::VK_ACCESS_COLOR_ATTACHMENT_READ_BIT;
     using ::VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
@@ -318,6 +335,10 @@ export {
     using ::VK_FRONT_FACE_COUNTER_CLOCKWISE;
     using ::VK_IMAGE_ASPECT_COLOR_BIT;
     using ::VK_IMAGE_ASPECT_DEPTH_BIT;
+    using ::VK_IMAGE_ASPECT_PLANE_0_BIT;
+    using ::VK_IMAGE_ASPECT_PLANE_1_BIT;
+    using ::VK_IMAGE_CREATE_DISJOINT_BIT;
+    using ::VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
     using ::VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     using ::VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
     using ::VK_IMAGE_LAYOUT_GENERAL;
@@ -355,6 +376,7 @@ export {
     using ::VK_PIPELINE_STAGE_TRANSFER_BIT;
     using ::VK_PIPELINE_STAGE_VERTEX_INPUT_BIT;
     using ::VK_PIPELINE_STAGE_VERTEX_SHADER_BIT;
+    using ::VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
     using ::VK_POLYGON_MODE_FILL;
     using ::VK_PRESENT_MODE_FIFO_KHR;
     using ::VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
@@ -375,6 +397,8 @@ export {
     using ::VK_SHADER_STAGE_VERTEX_BIT;
     using ::VK_SHARING_MODE_EXCLUSIVE;
     using ::VK_STRUCTURE_TYPE_APPLICATION_INFO;
+    using ::VK_STRUCTURE_TYPE_BIND_IMAGE_MEMORY_INFO;
+    using ::VK_STRUCTURE_TYPE_BIND_IMAGE_PLANE_MEMORY_INFO;
     using ::VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
     using ::VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
     using ::VK_STRUCTURE_TYPE_BUFFER_MEMORY_REQUIREMENTS_INFO_2;
@@ -384,6 +408,7 @@ export {
     using ::VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
     using ::VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT;
     using ::VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
+    using ::VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
     using ::VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     using ::VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
     using ::VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -397,8 +422,13 @@ export {
     using ::VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
     using ::VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     using ::VK_STRUCTURE_TYPE_IMAGE_DRM_FORMAT_MODIFIER_EXPLICIT_CREATE_INFO_EXT;
+    using ::VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO;
     using ::VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    using ::VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
+    using ::VK_STRUCTURE_TYPE_IMAGE_MEMORY_REQUIREMENTS_INFO_2;
+    using ::VK_STRUCTURE_TYPE_IMAGE_PLANE_MEMORY_REQUIREMENTS_INFO;
     using ::VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    using ::VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO;
     using ::VK_STRUCTURE_TYPE_IMPORT_MEMORY_FD_INFO_KHR;
     using ::VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
     using ::VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
