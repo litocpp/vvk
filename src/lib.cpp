@@ -1,6 +1,5 @@
 module;
 #include "vvk/macros.hpp"
-#include <vulkan/vulkan.h>
 
 module vvk;
 import rstd.log;
