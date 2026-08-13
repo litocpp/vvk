@@ -6,7 +6,6 @@ version = "0.1.0"
 name = "vvk"
 module = "vvk"
 archive = "vvk"
-discovery = "module"
 
 [usage]
 public-include-directories = ["include"]
