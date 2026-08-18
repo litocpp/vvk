@@ -23,13 +23,16 @@ git = "https://github.com/litocpp/rstd.git"
 visibility = "private"
 
 [external-dependencies.cmake.vulkan]
-find-package = "Vulkan"
+package = "Vulkan"
 targets = [{ name = "Vulkan::Vulkan", visibility = "public" }]
 
-[external-dependencies.cmake.vma]
-find-package = "VulkanMemoryAllocator"
+[external-sources.vma]
 git = "https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git"
 rev = "3aa921224c154a0d2c43912bc88e1c42ce1f7607"
+
+[external-dependencies.cmake.vma]
+package = "VulkanMemoryAllocator"
+source = "vma"
 cache = {
   VMA_BUILD_DOCUMENTATION = false,
   VMA_BUILD_SAMPLES = false,
