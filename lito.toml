@@ -11,20 +11,19 @@ archive = "vvk"
 public-include-directories = ["include"]
 
 [dependencies.rstd-std]
-git = "https://github.com/litocpp/rstd.git"
-visibility = "public"
+version = "0.1.0"
+pub = true
 
 [dependencies.rstd-cppstd]
-git = "https://github.com/litocpp/rstd.git"
-visibility = "public"
+version = "0.1.0"
+pub = true
 
 [dependencies.rstd-log]
-git = "https://github.com/litocpp/rstd.git"
-visibility = "private"
+version = "0.1.0"
 
 [external-dependencies.cmake.vulkan]
 package = "Vulkan"
-targets = [{ name = "Vulkan::Vulkan", visibility = "public" }]
+targets = [{ name = "Vulkan::Vulkan", pub = true }]
 
 [external-sources.vma]
 git = "https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git"
@@ -38,4 +37,4 @@ cache = {
   VMA_BUILD_SAMPLES = false,
   VMA_ENABLE_INSTALL = true,
 }
-targets = [{ name = "GPUOpen::VulkanMemoryAllocator", visibility = "public" }]
+targets = [{ name = "GPUOpen::VulkanMemoryAllocator", pub = true }]
