@@ -1,4 +1,5 @@
 module;
+#include <cstring>
 #include "vvk/macros.hpp"
 
 module vvk;
@@ -265,11 +266,24 @@ VkResult Free(VkDevice device, VkCommandPool pool, slice<VkCommandBuffer> allos,
 
 VkResult Instance::Create(Instance& inst, const VkApplicationInfo& app_info,
                           slice<const char*> layers, slice<const char*> extensions,
-                          InstanceDispatch& dld) noexcept {
+                          InstanceDispatch& dld, const void* next) noexcept {
+    // MoltenVK is a portability driver: on Apple platforms the instance must
+    // request VK_KHR_portability_enumeration AND set the enumerator bit in the
+    // create flags, otherwise vkCreateInstance fails with
+    // VK_ERROR_INCOMPATIBLE_DRIVER. The bit value is the Khronos-defined
+    // VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR (0x00000001).
+    const uint32_t create_flags = [&] {
+        for (auto i = usize(0); i < extensions.len(); ++i) {
+            if (std::strcmp(extensions[i], "VK_KHR_portability_enumeration") == 0) {
+                return uint32_t(0x00000001);
+            }
+        }
+        return uint32_t(0);
+    }();
     VkInstanceCreateInfo ci {
         .sType                   = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
-        .pNext                   = nullptr,
-        .flags                   = 0,
+        .pNext                   = next,
+        .flags                   = create_flags,
         .pApplicationInfo        = &app_info,
         .enabledLayerCount       = vk_count(layers.len()),
         .ppEnabledLayerNames     = layers.as_raw_ptr(),
