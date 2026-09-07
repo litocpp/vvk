@@ -33,7 +33,7 @@ if(NOT TARGET rstd::rstd)
     FetchContent_Declare(
         rstd
         GIT_REPOSITORY https://github.com/litocpp/rstd.git
-        GIT_TAG e1e8089c64a93b5349dcf822b27e6cb8a8b32f2f
+        GIT_TAG 8ad75f4bbb814041092b99ae38782226409f7471
         GIT_SHALLOW FALSE
         EXCLUDE_FROM_ALL
     )
