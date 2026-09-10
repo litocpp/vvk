@@ -1,7 +1,7 @@
 module;
 
-#define VK_ACCESS_2_SHADER_SAMPLED_READ_BIT vvk_header_access_2_shader_sampled_read_bit
-#define VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT vvk_header_pipeline_stage_2_all_commands_bit
+#define VK_ACCESS_2_SHADER_SAMPLED_READ_BIT    vvk_header_access_2_shader_sampled_read_bit
+#define VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT   vvk_header_pipeline_stage_2_all_commands_bit
 #define VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT vvk_header_pipeline_stage_2_compute_shader_bit
 #include <vulkan/vulkan.h>
 #undef VK_ACCESS_2_SHADER_SAMPLED_READ_BIT
@@ -335,6 +335,8 @@ export {
     using ::VK_FRONT_FACE_COUNTER_CLOCKWISE;
     using ::VK_IMAGE_ASPECT_COLOR_BIT;
     using ::VK_IMAGE_ASPECT_DEPTH_BIT;
+    using ::VK_IMAGE_ASPECT_MEMORY_PLANE_0_BIT_EXT;
+    using ::VK_IMAGE_ASPECT_MEMORY_PLANE_1_BIT_EXT;
     using ::VK_IMAGE_ASPECT_PLANE_0_BIT;
     using ::VK_IMAGE_ASPECT_PLANE_1_BIT;
     using ::VK_IMAGE_CREATE_DISJOINT_BIT;
@@ -365,6 +367,7 @@ export {
     using ::VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
     using ::VK_PIPELINE_BIND_POINT_COMPUTE;
     using ::VK_PIPELINE_BIND_POINT_GRAPHICS;
+    using ::VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
     using ::VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
     using ::VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
     using ::VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
@@ -376,7 +379,6 @@ export {
     using ::VK_PIPELINE_STAGE_TRANSFER_BIT;
     using ::VK_PIPELINE_STAGE_VERTEX_INPUT_BIT;
     using ::VK_PIPELINE_STAGE_VERTEX_SHADER_BIT;
-    using ::VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
     using ::VK_POLYGON_MODE_FILL;
     using ::VK_PRESENT_MODE_FIFO_KHR;
     using ::VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;

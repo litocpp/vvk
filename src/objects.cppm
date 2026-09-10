@@ -29,7 +29,7 @@ class Instance : public Handle<VkInstance, NoOwner, InstanceDispatch> {
 public:
     static VkResult Create(Instance&, const VkApplicationInfo&, slice<const char*> layers,
                            slice<const char*> extensions, InstanceDispatch&,
-                           const void* next = nullptr) noexcept;
+                           const void*        next = nullptr) noexcept;
 
     rstd::vec::Vec<PhysicalDevice> EnumeratePhysicalDevices() const noexcept;
 
