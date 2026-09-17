@@ -18,18 +18,60 @@ const char* ToString(VkResult result) noexcept;
 const char* ToString(VkFormat format) noexcept;
 const char* ToString(VkColorSpaceKHR color) noexcept;
 
-struct InstanceDispatch {
-    PFN_vkGetInstanceProcAddr vkGetInstanceProcAddr {};
+enum class DispatchStage
+{
+    Global,
+    Instance,
+    Device
+};
+enum class DispatchErrorKind
+{
+    InvalidInput,
+    Unsupported,
+    MissingCommand,
+    Vulkan
+};
+struct DispatchError {
+    DispatchErrorKind kind { DispatchErrorKind::InvalidInput };
+    DispatchStage     stage { DispatchStage::Global };
+    const char*       command {};
+    VkResult          api_result { VK_SUCCESS };
+    // A malformed resolver may omit even the mandatory destroy command.
+    VkInstance unowned_instance {};
+    VkDevice   unowned_device {};
+};
+struct InstanceCapabilities {
+    rstd::uint32_t api_version { VK_API_VERSION_1_1 };
+    bool           surface {}, debug_utils {}, portability_enumeration {};
+};
+struct DeviceCapabilities {
+    rstd::uint32_t api_version { VK_API_VERSION_1_1 };
+    bool           swapchain {}, memory_budget {}, debug_utils {};
+    bool           timeline_semaphore {}, timeline_extension {};
+    bool           synchronization2 {}, synchronization2_extension {};
+    bool           push_descriptor {}, external_memory_fd {}, external_semaphore_fd {},
+        drm_format_modifier {};
+    bool pipeline_executable {}, pipeline_executable_extension {};
+};
 
+// Tables borrow their resolver's library. Their address must remain stable while handles borrow
+// them.
+struct GlobalDispatch {
+    PFN_vkGetInstanceProcAddr                  vkGetInstanceProcAddr {};
     PFN_vkCreateInstance                       vkCreateInstance {};
-    PFN_vkDestroyInstance                      vkDestroyInstance {};
     PFN_vkEnumerateInstanceExtensionProperties vkEnumerateInstanceExtensionProperties {};
     PFN_vkEnumerateInstanceLayerProperties     vkEnumerateInstanceLayerProperties {};
+    PFN_vkEnumerateInstanceVersion             vkEnumerateInstanceVersion {};
+};
 
+struct InstanceDispatch {
+    VkInstance                                    instance {};
+    PFN_vkGetInstanceProcAddr                     resolver {};
+    InstanceCapabilities                          capabilities {};
+    PFN_vkDestroyInstance                         vkDestroyInstance {};
     PFN_vkCreateDebugUtilsMessengerEXT            vkCreateDebugUtilsMessengerEXT {};
     PFN_vkCreateDevice                            vkCreateDevice {};
     PFN_vkDestroyDebugUtilsMessengerEXT           vkDestroyDebugUtilsMessengerEXT {};
-    PFN_vkDestroyDevice                           vkDestroyDevice {};
     PFN_vkDestroySurfaceKHR                       vkDestroySurfaceKHR {};
     PFN_vkEnumerateDeviceExtensionProperties      vkEnumerateDeviceExtensionProperties {};
     PFN_vkEnumeratePhysicalDevices                vkEnumeratePhysicalDevices {};
@@ -46,11 +88,13 @@ struct InstanceDispatch {
     PFN_vkGetPhysicalDeviceSurfaceFormatsKHR      vkGetPhysicalDeviceSurfaceFormatsKHR {};
     PFN_vkGetPhysicalDeviceSurfacePresentModesKHR vkGetPhysicalDeviceSurfacePresentModesKHR {};
     PFN_vkGetPhysicalDeviceSurfaceSupportKHR      vkGetPhysicalDeviceSurfaceSupportKHR {};
-    PFN_vkGetSwapchainImagesKHR                   vkGetSwapchainImagesKHR {};
-    PFN_vkQueuePresentKHR                         vkQueuePresentKHR {};
+    PFN_vkGetPhysicalDeviceImageFormatProperties  vkGetPhysicalDeviceImageFormatProperties {};
 };
 
-struct DeviceDispatch : InstanceDispatch {
+struct DeviceDispatch {
+    VkDevice                                     device {};
+    VkInstance                                   instance {};
+    DeviceCapabilities                           capabilities {};
     PFN_vkAcquireNextImageKHR                    vkAcquireNextImageKHR {};
     PFN_vkAllocateCommandBuffers                 vkAllocateCommandBuffers {};
     PFN_vkAllocateDescriptorSets                 vkAllocateDescriptorSets {};
@@ -59,6 +103,8 @@ struct DeviceDispatch : InstanceDispatch {
     PFN_vkBindBufferMemory                       vkBindBufferMemory {};
     PFN_vkBindImageMemory                        vkBindImageMemory {};
     PFN_vkBindImageMemory2                       vkBindImageMemory2 {};
+    PFN_vkBindBufferMemory2                      vkBindBufferMemory2 {};
+    PFN_vkGetBufferMemoryRequirements            vkGetBufferMemoryRequirements {};
     PFN_vkCmdBeginDebugUtilsLabelEXT             vkCmdBeginDebugUtilsLabelEXT {};
     PFN_vkCmdBeginQuery                          vkCmdBeginQuery {};
     PFN_vkCmdBeginRenderPass                     vkCmdBeginRenderPass {};
@@ -167,10 +213,24 @@ struct DeviceDispatch : InstanceDispatch {
     PFN_vkUpdateDescriptorSets                   vkUpdateDescriptorSets {};
     PFN_vkWaitForFences                          vkWaitForFences {};
     PFN_vkWaitSemaphoresKHR                      vkWaitSemaphoresKHR {};
-
-    PFN_vkSetDebugUtilsObjectNameEXT vkSetDebugUtilsObjectNameEXT {};
-    PFN_vkSetDebugUtilsObjectTagEXT  vkSetDebugUtilsObjectTagEXT {};
+    PFN_vkSetDebugUtilsObjectNameEXT             vkSetDebugUtilsObjectNameEXT {};
+    PFN_vkSetDebugUtilsObjectTagEXT              vkSetDebugUtilsObjectTagEXT {};
+    PFN_vkDestroyDevice                          vkDestroyDevice {};
+    PFN_vkGetSwapchainImagesKHR                  vkGetSwapchainImagesKHR {};
+    PFN_vkQueuePresentKHR                        vkQueuePresentKHR {};
+    PFN_vkGetDeviceProcAddr                      vkGetDeviceProcAddr {};
 };
+
+auto LoadGlobal(PFN_vkGetInstanceProcAddr) -> Result<GlobalDispatch, DispatchError>;
+auto LoadInstance(const GlobalDispatch&, VkInstance, InstanceCapabilities)
+    -> Result<InstanceDispatch, DispatchError>;
+auto LoadDevice(const InstanceDispatch&, VkDevice, DeviceCapabilities)
+    -> Result<DeviceDispatch, DispatchError>;
+auto ParseInstanceCapabilities(const VkInstanceCreateInfo&)
+    -> Result<InstanceCapabilities, DispatchError>;
+auto ParseDeviceCapabilities(const VkDeviceCreateInfo&, const InstanceCapabilities&,
+                             rstd::uint32_t physical_api_version)
+    -> Result<DeviceCapabilities, DispatchError>;
 
 template<typename THandle, typename Type = typename THandle::handle_type>
 auto ToVector(slice<THandle> handles) -> rstd::vec::Vec<Type> {
@@ -233,13 +293,8 @@ private:
     const DeviceDispatch*          dld    = nullptr;
 };
 
-bool Load(InstanceDispatch&) noexcept;
-bool Load(VkInstance, InstanceDispatch&) noexcept;
-bool Load(VkDevice, InstanceDispatch&) noexcept;
-bool Load(VkDevice, DeviceDispatch&) noexcept;
-
 void Destroy(VkInstance, const InstanceDispatch&) noexcept;
-void Destroy(VkDevice, const InstanceDispatch&) noexcept;
+void Destroy(VkDevice, const DeviceDispatch&) noexcept;
 void Destroy(VkInstance, VkDebugUtilsMessengerEXT, const InstanceDispatch&) noexcept;
 void Destroy(VkInstance, VkSurfaceKHR, const InstanceDispatch&) noexcept;
 void Destroy(VkDevice, VkCommandPool, const DeviceDispatch&) noexcept;

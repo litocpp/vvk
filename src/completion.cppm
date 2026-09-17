@@ -2,6 +2,7 @@ export module vvk:completion;
 
 import rstd;
 import :ffi.vulkan;
+import :dispatch;
 
 using namespace rstd::prelude;
 
@@ -101,10 +102,11 @@ struct TimelineSemaphoreDeviceDispatch {
     PFN_vkCreateSemaphore  create_semaphore { nullptr };
     PFN_vkDestroySemaphore destroy_semaphore { nullptr };
 
-    static TimelineSemaphoreDeviceDispatch Vulkan() noexcept {
+    static TimelineSemaphoreDeviceDispatch FromDispatch(const DeviceDispatch& dispatch) noexcept {
+        if (! dispatch.capabilities.timeline_semaphore) return {};
         return TimelineSemaphoreDeviceDispatch {
-            .create_semaphore  = vkCreateSemaphore,
-            .destroy_semaphore = vkDestroySemaphore,
+            .create_semaphore  = dispatch.vkCreateSemaphore,
+            .destroy_semaphore = dispatch.vkDestroySemaphore,
         };
     }
 
@@ -134,9 +136,10 @@ public:
         }
     }
 
-    static TimelineSemaphoreCreateResult
-    Create(VkDevice device, QueueDomain queue, u64 source_generation, u64 initial_value = u64(),
-           TimelineSemaphoreDeviceDispatch dispatch = TimelineSemaphoreDeviceDispatch::Vulkan()) {
+    static TimelineSemaphoreCreateResult Create(VkDevice device, QueueDomain queue,
+                                                u64                             source_generation,
+                                                TimelineSemaphoreDeviceDispatch dispatch,
+                                                u64 initial_value = u64()) {
         if (device == VK_NULL_HANDLE || ! queue.valid() ||
             queue.device != OpaqueHandleIdentity(device) || source_generation == u64() ||
             ! dispatch.valid()) {

@@ -14,27 +14,26 @@ export namespace vvk
 /// All handles from one allocator require external synchronization. The device and
 /// metadata allocator must outlive the allocator, resources, allocations and mappings.
 struct MemoryDispatch {
-    PFN_vkGetPhysicalDeviceProperties        properties { vkGetPhysicalDeviceProperties };
-    PFN_vkGetPhysicalDeviceMemoryProperties2 memory_properties {
-        vkGetPhysicalDeviceMemoryProperties2
-    };
-    PFN_vkAllocateMemory               allocate { vkAllocateMemory };
-    PFN_vkFreeMemory                   free { vkFreeMemory };
-    PFN_vkCreateBuffer                 create_buffer { vkCreateBuffer };
-    PFN_vkDestroyBuffer                destroy_buffer { vkDestroyBuffer };
-    PFN_vkCreateImage                  create_image { vkCreateImage };
-    PFN_vkDestroyImage                 destroy_image { vkDestroyImage };
-    PFN_vkGetBufferMemoryRequirements2 buffer_requirements { vkGetBufferMemoryRequirements2 };
-    PFN_vkGetImageMemoryRequirements2  image_requirements { vkGetImageMemoryRequirements2 };
-    PFN_vkBindBufferMemory             bind_buffer { vkBindBufferMemory };
-    PFN_vkBindImageMemory              bind_image { vkBindImageMemory };
-    PFN_vkMapMemory                    map { vkMapMemory };
-    PFN_vkUnmapMemory                  unmap { vkUnmapMemory };
-    PFN_vkFlushMappedMemoryRanges      flush { vkFlushMappedMemoryRanges };
-    PFN_vkInvalidateMappedMemoryRanges invalidate { vkInvalidateMappedMemoryRanges };
-    static MemoryDispatch              FromDeviceDispatch(const DeviceDispatch& dispatch) noexcept {
-        return { dispatch.vkGetPhysicalDeviceProperties,
-                 dispatch.vkGetPhysicalDeviceMemoryProperties2,
+    PFN_vkGetPhysicalDeviceProperties        properties {};
+    PFN_vkGetPhysicalDeviceMemoryProperties2 memory_properties {};
+    PFN_vkAllocateMemory                     allocate {};
+    PFN_vkFreeMemory                         free {};
+    PFN_vkCreateBuffer                       create_buffer {};
+    PFN_vkDestroyBuffer                      destroy_buffer {};
+    PFN_vkCreateImage                        create_image {};
+    PFN_vkDestroyImage                       destroy_image {};
+    PFN_vkGetBufferMemoryRequirements2       buffer_requirements {};
+    PFN_vkGetImageMemoryRequirements2        image_requirements {};
+    PFN_vkBindBufferMemory                   bind_buffer {};
+    PFN_vkBindImageMemory                    bind_image {};
+    PFN_vkMapMemory                          map {};
+    PFN_vkUnmapMemory                        unmap {};
+    PFN_vkFlushMappedMemoryRanges            flush {};
+    PFN_vkInvalidateMappedMemoryRanges       invalidate {};
+    static MemoryDispatch                    FromDispatch(const InstanceDispatch& instance,
+                                                          const DeviceDispatch&   dispatch) noexcept {
+        return { instance.vkGetPhysicalDeviceProperties,
+                 instance.vkGetPhysicalDeviceMemoryProperties2,
                  dispatch.vkAllocateMemory,
                  dispatch.vkFreeMemory,
                  dispatch.vkCreateBuffer,
@@ -80,6 +79,14 @@ struct MemoryAllocatorCreateInfo {
     // Set only when VK_EXT_memory_budget was enabled on this device.
     bool           memory_budget_enabled {};
     MemoryDispatch dispatch {};
+    MemoryAllocatorCreateInfo() = default;
+    MemoryAllocatorCreateInfo(VkPhysicalDevice physical, VkDevice device, VkDeviceSize block,
+                              bool budget, MemoryDispatch dispatch)
+        : physical_device(physical),
+          device(device),
+          block_size(block),
+          memory_budget_enabled(budget),
+          dispatch(dispatch) {}
 };
 struct MemoryRequest {
     VkMemoryPropertyFlags required {};
@@ -509,6 +516,19 @@ public:
             DropMemoryState(state_);
             state_ = nullptr;
         }
+    }
+    static auto Create(VkPhysicalDevice physical, const InstanceDispatch& instance,
+                       const DeviceDispatch& device, VkDeviceSize block_size = 16 * 1024 * 1024,
+                       MemoryMetadata metadata = alloc::allocator_ref(alloc::GLOBAL))
+        -> Result<MemoryAllocator, MemoryError> {
+        if (! instance.instance || device.instance != instance.instance)
+            return Err(MemoryError { MemoryErrorKind::InvalidRequest });
+        return Create({ physical,
+                        device.device,
+                        block_size,
+                        device.capabilities.memory_budget,
+                        MemoryDispatch::FromDispatch(instance, device) },
+                      metadata);
     }
     static auto Create(MemoryAllocatorCreateInfo info,
                        MemoryMetadata            metadata = alloc::allocator_ref(alloc::GLOBAL))

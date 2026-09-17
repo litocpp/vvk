@@ -3,6 +3,8 @@ module;
 #include <vulkan/vulkan.h>
 
 #define VMA_VULKAN_HEADERS_ALREADY_INCLUDED 1
+#define VMA_STATIC_VULKAN_FUNCTIONS         0
+#define VMA_DYNAMIC_VULKAN_FUNCTIONS        1
 #include <vk_mem_alloc.h>
 
 export module vvk:ffi.vma;
@@ -40,3 +42,6 @@ export using ::vmaMapMemory;
 export using ::vmaUnmapMemory;
 export using ::vmaVirtualAllocate;
 export using ::vmaVirtualFree;
+
+export using ::VmaVulkanFunctions;
+export using ::VMA_ALLOCATOR_CREATE_EXT_MEMORY_BUDGET_BIT;

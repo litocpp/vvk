@@ -27,9 +27,8 @@ class Instance : public Handle<VkInstance, NoOwner, InstanceDispatch> {
     using Handle<VkInstance, NoOwner, InstanceDispatch>::Handle;
 
 public:
-    static VkResult Create(Instance&, const VkApplicationInfo&, slice<const char*> layers,
-                           slice<const char*> extensions, InstanceDispatch&,
-                           const void*        next = nullptr) noexcept;
+    static auto Create(Instance&, const GlobalDispatch&, const VkInstanceCreateInfo&,
+                       InstanceDispatch&) -> Result<empty, DispatchError>;
 
     rstd::vec::Vec<PhysicalDevice> EnumeratePhysicalDevices() const noexcept;
 
@@ -181,11 +180,8 @@ class Device : public Handle<VkDevice, NoOwner, DeviceDispatch> {
     using Handle<VkDevice, NoOwner, DeviceDispatch>::Handle;
 
 public:
-    static VkResult Create(Device&, VkPhysicalDevice physical_device,
-                           slice<VkDeviceQueueCreateInfo> queues_ci,
-                           slice<const char*> enabled_extensions, const void* next,
-                           DeviceDispatch&                 dispatch,
-                           const VkPhysicalDeviceFeatures* enabled_features = nullptr);
+    static auto Create(Device&, VkPhysicalDevice, const InstanceDispatch&,
+                       const VkDeviceCreateInfo&, DeviceDispatch&) -> Result<empty, DispatchError>;
 
     Queue GetQueue(rstd::uint32_t family_index) const noexcept;
 
@@ -638,9 +634,9 @@ public:
 };
 
 rstd::Option<rstd::vec::Vec<VkExtensionProperties>>
-EnumerateInstanceExtensionProperties(const InstanceDispatch& dld);
+EnumerateInstanceExtensionProperties(const GlobalDispatch& dld);
 
 rstd::Option<rstd::vec::Vec<VkLayerProperties>>
-EnumerateInstanceLayerProperties(const InstanceDispatch& dld);
+EnumerateInstanceLayerProperties(const GlobalDispatch& dld);
 
 } // namespace vvk

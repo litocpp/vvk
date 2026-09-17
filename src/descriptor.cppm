@@ -2,6 +2,7 @@ export module vvk:descriptor;
 
 import rstd;
 import :ffi.vulkan;
+import :dispatch;
 
 using namespace rstd::prelude;
 
@@ -21,12 +22,12 @@ struct DescriptorDeviceDispatch {
     PFN_vkAllocateDescriptorSets allocate_sets { nullptr };
     PFN_vkUpdateDescriptorSets   update_sets { nullptr };
 
-    static DescriptorDeviceDispatch Vulkan() noexcept {
+    static DescriptorDeviceDispatch FromDispatch(const DeviceDispatch& dispatch) noexcept {
         return DescriptorDeviceDispatch {
-            .create_pool   = vkCreateDescriptorPool,
-            .destroy_pool  = vkDestroyDescriptorPool,
-            .allocate_sets = vkAllocateDescriptorSets,
-            .update_sets   = vkUpdateDescriptorSets,
+            .create_pool   = dispatch.vkCreateDescriptorPool,
+            .destroy_pool  = dispatch.vkDestroyDescriptorPool,
+            .allocate_sets = dispatch.vkAllocateDescriptorSets,
+            .update_sets   = dispatch.vkUpdateDescriptorSets,
         };
     }
 
@@ -83,9 +84,9 @@ public:
         }
     }
 
-    static DescriptorArenaCreateResult
-    Create(VkDevice device, rstd::uint32_t max_sets, slice<VkDescriptorPoolSize> sizes,
-           DescriptorDeviceDispatch dispatch = DescriptorDeviceDispatch::Vulkan()) {
+    static DescriptorArenaCreateResult Create(VkDevice device, rstd::uint32_t max_sets,
+                                              slice<VkDescriptorPoolSize> sizes,
+                                              DescriptorDeviceDispatch    dispatch) {
         if (device == VK_NULL_HANDLE || max_sets == 0 || sizes.len() == usize() ||
             ! dispatch.valid()) {
             return { .api_result = VK_ERROR_INITIALIZATION_FAILED };

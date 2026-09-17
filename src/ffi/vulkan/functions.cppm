@@ -241,3 +241,10 @@ export {
     using ::vkFlushMappedMemoryRanges;
     using ::vkInvalidateMappedMemoryRanges;
 }
+
+export {
+    using ::PFN_vkBindBufferMemory2;
+    using ::PFN_vkEnumerateInstanceVersion;
+    using ::PFN_vkGetBufferMemoryRequirements;
+    using ::PFN_vkGetPhysicalDeviceImageFormatProperties;
+}

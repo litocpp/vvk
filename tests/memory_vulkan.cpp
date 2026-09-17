@@ -9,25 +9,32 @@ using namespace rstd::prelude;
 namespace
 {
 struct VulkanMemoryTest {
-    VkInstance                          instance {};
-    VkPhysicalDevice                    gpu {};
-    VkDevice                            device {};
-    VkQueue                             queue {};
-    VkCommandPool                       pool {};
-    VkDebugUtilsMessengerEXT            messenger {};
-    PFN_vkDestroyDebugUtilsMessengerEXT destroy_messenger {};
-    rstd::uint32_t                      family {}, errors {};
-    VkPhysicalDeviceProperties          properties {};
-    bool                                validation {};
-    bool                                unavailable {};
+    Option<vvk::VulkanLoader>  loader;
+    const vvk::GlobalDispatch* global {};
+    vvk::InstanceDispatch      instance_dispatch;
+    vvk::DeviceDispatch        device_dispatch;
+    vvk::Instance              instance_owner;
+    vvk::Device                device_owner;
+
+    VkInstance                 instance {};
+    VkPhysicalDevice           gpu {};
+    VkDevice                   device {};
+    VkQueue                    queue {};
+    VkCommandPool              pool {};
+    VkDebugUtilsMessengerEXT   messenger {};
+    rstd::uint32_t             family {}, errors {};
+    VkPhysicalDeviceProperties properties {};
+    bool                       validation {};
+    bool                       unavailable {};
     ~VulkanMemoryTest() {
         if (device) {
-            vkDeviceWaitIdle(device);
-            if (pool) vkDestroyCommandPool(device, pool, nullptr);
-            vkDestroyDevice(device, nullptr);
+            device_dispatch.vkDeviceWaitIdle(device);
+            if (pool) device_dispatch.vkDestroyCommandPool(device, pool, nullptr);
+            device_owner.reset();
         }
-        if (messenger) destroy_messenger(instance, messenger, nullptr);
-        if (instance) vkDestroyInstance(instance, nullptr);
+        if (messenger)
+            instance_dispatch.vkDestroyDebugUtilsMessengerEXT(instance, messenger, nullptr);
+        instance_owner.reset();
     }
     static VKAPI_ATTR VkBool32 VKAPI_CALL Debug(VkDebugUtilsMessageSeverityFlagBitsEXT severity,
                                                 VkDebugUtilsMessageTypeFlagsEXT,
@@ -41,11 +48,20 @@ struct VulkanMemoryTest {
         return VK_FALSE;
     }
     bool initialize() {
+        auto opened = vvk::VulkanLoader::Open();
+        if (opened.is_err()) {
+            auto error  = opened.unwrap_err_unchecked();
+            unavailable = error.kind == vvk::LoaderErrorKind::OpenLibrary;
+            std::fprintf(stderr, "vvk loader failed: kind=%u\n", unsigned(error.kind));
+            return false;
+        }
+        loader               = Some(rstd::move(opened).unwrap_unchecked());
+        global               = &loader->global();
         rstd::uint32_t count = 0;
-        if (vkEnumerateInstanceLayerProperties(&count, nullptr) != VK_SUCCESS) return false;
+        if (global->vkEnumerateInstanceLayerProperties(&count, nullptr) != VK_SUCCESS) return false;
         auto layers = alloc::vec::Vec<VkLayerProperties>::with_capacity(usize(count));
         for (unsigned i = 0; i < count; ++i) layers.push(VkLayerProperties {});
-        if (vkEnumerateInstanceLayerProperties(&count, layers.as_mut_ptr().as_raw_ptr()) !=
+        if (global->vkEnumerateInstanceLayerProperties(&count, layers.as_mut_ptr().as_raw_ptr()) !=
             VK_SUCCESS)
             return false;
         for (const auto& layer : layers)
@@ -67,14 +83,20 @@ struct VulkanMemoryTest {
             info.enabledExtensionCount   = 1;
             info.ppEnabledExtensionNames = &extension;
         }
-        auto instance_result = vkCreateInstance(&info, nullptr, &instance);
-        if (instance_result == VK_ERROR_INCOMPATIBLE_DRIVER) unavailable = true;
-        if (instance_result != VK_SUCCESS) return false;
+        auto instance_result =
+            vvk::Instance::Create(instance_owner, *global, info, instance_dispatch);
+        if (instance_result.is_err()) {
+            auto error  = instance_result.unwrap_err_unchecked();
+            unavailable = error.kind == vvk::DispatchErrorKind::Vulkan &&
+                          error.api_result == VK_ERROR_INCOMPATIBLE_DRIVER;
+            std::fprintf(stderr,
+                         "vvk instance failed: command=%s, result=%d\n",
+                         error.command ? error.command : "configuration",
+                         error.api_result);
+            return false;
+        }
+        instance = *instance_owner;
         if (validation) {
-            auto create = reinterpret_cast<PFN_vkCreateDebugUtilsMessengerEXT>(
-                vkGetInstanceProcAddr(instance, "vkCreateDebugUtilsMessengerEXT"));
-            destroy_messenger = reinterpret_cast<PFN_vkDestroyDebugUtilsMessengerEXT>(
-                vkGetInstanceProcAddr(instance, "vkDestroyDebugUtilsMessengerEXT"));
             VkDebugUtilsMessengerCreateInfoEXT debug {
                 VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT
             };
@@ -84,30 +106,32 @@ struct VulkanMemoryTest {
                                     VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
             debug.pfnUserCallback = Debug;
             debug.pUserData       = this;
-            if (! create || ! destroy_messenger ||
-                create(instance, &debug, nullptr, &messenger) != VK_SUCCESS)
+            if (instance_dispatch.vkCreateDebugUtilsMessengerEXT(
+                    instance, &debug, nullptr, &messenger) != VK_SUCCESS)
                 return false;
         }
         count = 0;
-        if (vkEnumeratePhysicalDevices(instance, &count, nullptr) != VK_SUCCESS) return false;
+        if (instance_dispatch.vkEnumeratePhysicalDevices(instance, &count, nullptr) != VK_SUCCESS)
+            return false;
         if (count == 0) {
             unavailable = true;
             return false;
         }
         auto devices = alloc::vec::Vec<VkPhysicalDevice>::with_capacity(usize(count));
         for (unsigned i = 0; i < count; ++i) devices.push(VkPhysicalDevice {});
-        if (vkEnumeratePhysicalDevices(instance, &count, devices.as_mut_ptr().as_raw_ptr()) !=
-            VK_SUCCESS)
+        if (instance_dispatch.vkEnumeratePhysicalDevices(
+                instance, &count, devices.as_mut_ptr().as_raw_ptr()) != VK_SUCCESS)
             return false;
         for (auto candidate : devices) {
             VkPhysicalDeviceProperties candidate_properties;
-            vkGetPhysicalDeviceProperties(candidate, &candidate_properties);
+            instance_dispatch.vkGetPhysicalDeviceProperties(candidate, &candidate_properties);
             if (candidate_properties.apiVersion < VK_API_VERSION_1_1) continue;
             unsigned families = 0;
-            vkGetPhysicalDeviceQueueFamilyProperties(candidate, &families, nullptr);
+            instance_dispatch.vkGetPhysicalDeviceQueueFamilyProperties(
+                candidate, &families, nullptr);
             auto queues = alloc::vec::Vec<VkQueueFamilyProperties>::with_capacity(usize(families));
             for (unsigned i = 0; i < families; ++i) queues.push(VkQueueFamilyProperties {});
-            vkGetPhysicalDeviceQueueFamilyProperties(
+            instance_dispatch.vkGetPhysicalDeviceQueueFamilyProperties(
                 candidate, &families, queues.as_mut_ptr().as_raw_ptr());
             for (unsigned i = 0; i < families; ++i)
                 if (queues[usize(i)].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
@@ -129,13 +153,24 @@ struct VulkanMemoryTest {
         VkDeviceCreateInfo device_info { VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
         device_info.queueCreateInfoCount = 1;
         device_info.pQueueCreateInfos    = &queue_info;
-        if (vkCreateDevice(gpu, &device_info, nullptr, &device) != VK_SUCCESS) return false;
-        vkGetDeviceQueue(device, family, 0, &queue);
+        auto created =
+            vvk::Device::Create(device_owner, gpu, instance_dispatch, device_info, device_dispatch);
+        if (created.is_err()) {
+            auto error = created.unwrap_err_unchecked();
+            std::fprintf(stderr,
+                         "vvk device failed: command=%s, result=%d\n",
+                         error.command ? error.command : "configuration",
+                         error.api_result);
+            return false;
+        }
+        device = *device_owner;
+        device_dispatch.vkGetDeviceQueue(device, family, 0, &queue);
         VkCommandPoolCreateInfo pool_info { VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
                                             nullptr,
                                             VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
                                             family };
-        if (vkCreateCommandPool(device, &pool_info, nullptr, &pool) != VK_SUCCESS) return false;
+        if (device_dispatch.vkCreateCommandPool(device, &pool_info, nullptr, &pool) != VK_SUCCESS)
+            return false;
         std::printf("vvk device: %s; validation=%s; type=%u\n",
                     properties.deviceName,
                     validation ? "enabled" : "unavailable",
@@ -149,29 +184,33 @@ struct VulkanMemoryTest {
                                            pool,
                                            VK_COMMAND_BUFFER_LEVEL_PRIMARY,
                                            1 };
-        if (vkAllocateCommandBuffers(device, &info, &command) != VK_SUCCESS) return VK_NULL_HANDLE;
+        if (device_dispatch.vkAllocateCommandBuffers(device, &info, &command) != VK_SUCCESS)
+            return VK_NULL_HANDLE;
         VkCommandBufferBeginInfo begin_info { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
                                               nullptr,
                                               VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT };
-        if (vkBeginCommandBuffer(command, &begin_info) != VK_SUCCESS) return VK_NULL_HANDLE;
+        if (device_dispatch.vkBeginCommandBuffer(command, &begin_info) != VK_SUCCESS)
+            return VK_NULL_HANDLE;
         return command;
     }
     VkFence submit(VkCommandBuffer command) {
-        if (vkEndCommandBuffer(command) != VK_SUCCESS) return VK_NULL_HANDLE;
+        if (device_dispatch.vkEndCommandBuffer(command) != VK_SUCCESS) return VK_NULL_HANDLE;
         VkFence           fence {};
         VkFenceCreateInfo info { VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
-        if (vkCreateFence(device, &info, nullptr, &fence) != VK_SUCCESS) return VK_NULL_HANDLE;
+        if (device_dispatch.vkCreateFence(device, &info, nullptr, &fence) != VK_SUCCESS)
+            return VK_NULL_HANDLE;
         VkSubmitInfo submit_info { VK_STRUCTURE_TYPE_SUBMIT_INFO };
         submit_info.commandBufferCount = 1;
         submit_info.pCommandBuffers    = &command;
-        if (vkQueueSubmit(queue, 1, &submit_info, fence) != VK_SUCCESS) {
-            vkDestroyFence(device, fence, nullptr);
+        if (device_dispatch.vkQueueSubmit(queue, 1, &submit_info, fence) != VK_SUCCESS) {
+            device_dispatch.vkDestroyFence(device, fence, nullptr);
             return VK_NULL_HANDLE;
         }
         return fence;
     }
     bool wait(VkFence fence) {
-        return vkWaitForFences(device, 1, &fence, VK_TRUE, 10'000'000'000ULL) == VK_SUCCESS;
+        return device_dispatch.vkWaitForFences(device, 1, &fence, VK_TRUE, 10'000'000'000ULL) ==
+               VK_SUCCESS;
     }
 };
 VkBufferCreateInfo BufferCreate(VkDeviceSize size, VkBufferUsageFlags usage) {
@@ -180,15 +219,15 @@ VkBufferCreateInfo BufferCreate(VkDeviceSize size, VkBufferUsageFlags usage) {
     info.usage = usage;
     return info;
 }
-void TransferBarrier(VkCommandBuffer command, VkBuffer buffer, VkAccessFlags destination,
-                     VkPipelineStageFlags stage) {
+void TransferBarrier(const vvk::DeviceDispatch& dispatch, VkCommandBuffer command, VkBuffer buffer,
+                     VkAccessFlags destination, VkPipelineStageFlags stage) {
     VkBufferMemoryBarrier barrier { VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER };
     barrier.srcAccessMask       = VK_ACCESS_TRANSFER_WRITE_BIT;
     barrier.dstAccessMask       = destination;
     barrier.srcQueueFamilyIndex = barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     barrier.buffer                                            = buffer;
     barrier.size                                              = VK_WHOLE_SIZE;
-    vkCmdPipelineBarrier(
+    dispatch.vkCmdPipelineBarrier(
         command, VK_PIPELINE_STAGE_TRANSFER_BIT, stage, 0, 0, nullptr, 1, &barrier, 0, nullptr);
 }
 } // namespace
@@ -196,11 +235,12 @@ void TransferBarrier(VkCommandBuffer command, VkBuffer buffer, VkAccessFlags des
 TEST(MemoryVulkan, UploadSlicesAndSubmissionLifetime) {
     VulkanMemoryTest context;
     const bool       initialized = context.initialize();
-    if (context.unavailable) GTEST_SKIP() << "No Vulkan 1.1 graphics device available";
+    if (context.unavailable)
+        GTEST_SKIP() << "No Vulkan loader, ICD, or Vulkan 1.1 graphics device available";
     ASSERT_TRUE(initialized) << "Vulkan test context creation failed";
     {
-        auto allocator_result =
-            vvk::MemoryAllocator::Create({ context.gpu, context.device, 1024 * 1024 });
+        auto allocator_result = vvk::MemoryAllocator::Create(
+            context.gpu, context.instance_dispatch, context.device_dispatch, 1024 * 1024);
         ASSERT_TRUE(allocator_result.is_ok());
         auto allocator = allocator_result.unwrap_unchecked();
         auto host      = vvk::MemoryRequest { .required           = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
@@ -246,13 +286,17 @@ TEST(MemoryVulkan, UploadSlicesAndSubmissionLifetime) {
             commands[batch] = context.begin();
             ASSERT_NE(commands[batch], VK_NULL_HANDLE);
             VkBufferCopy copy { slice.offset, slice.offset, slice.size };
-            vkCmdCopyBuffer(commands[batch], stage.handle(), destination.handle(), 1, &copy);
-            TransferBarrier(commands[batch],
+            context.device_dispatch.vkCmdCopyBuffer(
+                commands[batch], stage.handle(), destination.handle(), 1, &copy);
+            TransferBarrier(context.device_dispatch,
+                            commands[batch],
                             destination.handle(),
                             VK_ACCESS_TRANSFER_READ_BIT,
                             VK_PIPELINE_STAGE_TRANSFER_BIT);
-            vkCmdCopyBuffer(commands[batch], destination.handle(), readback.handle(), 1, &copy);
-            TransferBarrier(commands[batch],
+            context.device_dispatch.vkCmdCopyBuffer(
+                commands[batch], destination.handle(), readback.handle(), 1, &copy);
+            TransferBarrier(context.device_dispatch,
+                            commands[batch],
                             readback.handle(),
                             VK_ACCESS_HOST_READ_BIT,
                             VK_PIPELINE_STAGE_HOST_BIT);
@@ -277,8 +321,9 @@ TEST(MemoryVulkan, UploadSlicesAndSubmissionLifetime) {
         ASSERT_TRUE(ranges.deallocate(first.id).is_ok());
         auto reused = ranges.allocate(256, alignment).unwrap_unchecked();
         EXPECT_EQ(reused.offset, first.offset);
-        for (auto fence : fences) vkDestroyFence(context.device, fence, nullptr);
-        vkFreeCommandBuffers(context.device, context.pool, 2, commands);
+        for (auto fence : fences)
+            context.device_dispatch.vkDestroyFence(context.device, fence, nullptr);
+        context.device_dispatch.vkFreeCommandBuffers(context.device, context.pool, 2, commands);
     }
     EXPECT_EQ(context.errors, 0u);
 }
@@ -286,11 +331,12 @@ TEST(MemoryVulkan, UploadSlicesAndSubmissionLifetime) {
 TEST(MemoryVulkan, ImageTransferAndSupportedAttachments) {
     VulkanMemoryTest context;
     const bool       initialized = context.initialize();
-    if (context.unavailable) GTEST_SKIP() << "No Vulkan 1.1 graphics device available";
+    if (context.unavailable)
+        GTEST_SKIP() << "No Vulkan loader, ICD, or Vulkan 1.1 graphics device available";
     ASSERT_TRUE(initialized) << "Vulkan test context creation failed";
     {
-        auto allocator_result =
-            vvk::MemoryAllocator::Create({ context.gpu, context.device, 1024 * 1024 });
+        auto allocator_result = vvk::MemoryAllocator::Create(
+            context.gpu, context.instance_dispatch, context.device_dispatch, 1024 * 1024);
         ASSERT_TRUE(allocator_result.is_ok());
         auto              allocator = allocator_result.unwrap_unchecked();
         VkImageCreateInfo image_info { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
@@ -329,47 +375,50 @@ TEST(MemoryVulkan, ImageTransferAndSupportedAttachments) {
         barrier.srcQueueFamilyIndex = barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         barrier.image                                             = image.handle();
         barrier.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
-        vkCmdPipelineBarrier(command,
-                             VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                             VK_PIPELINE_STAGE_TRANSFER_BIT,
-                             0,
-                             0,
-                             nullptr,
-                             0,
-                             nullptr,
-                             1,
-                             &barrier);
+        context.device_dispatch.vkCmdPipelineBarrier(command,
+                                                     VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                                                     VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                                     0,
+                                                     0,
+                                                     nullptr,
+                                                     0,
+                                                     nullptr,
+                                                     1,
+                                                     &barrier);
         VkBufferImageCopy copy {};
         copy.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
         copy.imageExtent      = { 16, 16, 1 };
-        vkCmdCopyBufferToImage(command,
-                               stage.handle(),
-                               image.handle(),
-                               VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                               1,
-                               &copy);
+        context.device_dispatch.vkCmdCopyBufferToImage(command,
+                                                       stage.handle(),
+                                                       image.handle(),
+                                                       VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                                       1,
+                                                       &copy);
         barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
         barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
         barrier.oldLayout     = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
         barrier.newLayout     = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-        vkCmdPipelineBarrier(command,
-                             VK_PIPELINE_STAGE_TRANSFER_BIT,
-                             VK_PIPELINE_STAGE_TRANSFER_BIT,
-                             0,
-                             0,
-                             nullptr,
-                             0,
-                             nullptr,
-                             1,
-                             &barrier);
-        vkCmdCopyImageToBuffer(command,
-                               image.handle(),
-                               VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                               readback.handle(),
-                               1,
-                               &copy);
-        TransferBarrier(
-            command, readback.handle(), VK_ACCESS_HOST_READ_BIT, VK_PIPELINE_STAGE_HOST_BIT);
+        context.device_dispatch.vkCmdPipelineBarrier(command,
+                                                     VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                                     VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                                     0,
+                                                     0,
+                                                     nullptr,
+                                                     0,
+                                                     nullptr,
+                                                     1,
+                                                     &barrier);
+        context.device_dispatch.vkCmdCopyImageToBuffer(command,
+                                                       image.handle(),
+                                                       VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                                                       readback.handle(),
+                                                       1,
+                                                       &copy);
+        TransferBarrier(context.device_dispatch,
+                        command,
+                        readback.handle(),
+                        VK_ACCESS_HOST_READ_BIT,
+                        VK_PIPELINE_STAGE_HOST_BIT);
         auto fence = context.submit(command);
         ASSERT_NE(fence, VK_NULL_HANDLE);
         ASSERT_TRUE(context.wait(fence));
@@ -378,13 +427,13 @@ TEST(MemoryVulkan, ImageTransferAndSupportedAttachments) {
         auto mapped = mapped_result.unwrap_unchecked();
         ASSERT_TRUE(read_memory.invalidate().is_ok());
         EXPECT_EQ(std::memcmp(write.data(), mapped.data(), 1024), 0);
-        vkDestroyFence(context.device, fence, nullptr);
-        vkFreeCommandBuffers(context.device, context.pool, 1, &command);
+        context.device_dispatch.vkDestroyFence(context.device, fence, nullptr);
+        context.device_dispatch.vkFreeCommandBuffers(context.device, context.pool, 1, &command);
         unsigned       attachments = 0;
         const VkFormat depth_formats[] { VK_FORMAT_D32_SFLOAT, VK_FORMAT_D16_UNORM };
         for (auto format : depth_formats) {
             VkImageFormatProperties supported {};
-            if (vkGetPhysicalDeviceImageFormatProperties(
+            if (context.instance_dispatch.vkGetPhysicalDeviceImageFormatProperties(
                     context.gpu,
                     format,
                     VK_IMAGE_TYPE_2D,
@@ -402,13 +451,14 @@ TEST(MemoryVulkan, ImageTransferAndSupportedAttachments) {
         }
         EXPECT_GT(attachments, 0u);
         VkImageFormatProperties supported {};
-        if (vkGetPhysicalDeviceImageFormatProperties(context.gpu,
-                                                     VK_FORMAT_R8G8B8A8_UNORM,
-                                                     VK_IMAGE_TYPE_2D,
-                                                     VK_IMAGE_TILING_OPTIMAL,
-                                                     VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
-                                                     0,
-                                                     &supported) == VK_SUCCESS &&
+        if (context.instance_dispatch.vkGetPhysicalDeviceImageFormatProperties(
+                context.gpu,
+                VK_FORMAT_R8G8B8A8_UNORM,
+                VK_IMAGE_TYPE_2D,
+                VK_IMAGE_TILING_OPTIMAL,
+                VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+                0,
+                &supported) == VK_SUCCESS &&
             (supported.sampleCounts & VK_SAMPLE_COUNT_4_BIT)) {
             image_info.format  = VK_FORMAT_R8G8B8A8_UNORM;
             image_info.usage   = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
@@ -425,10 +475,12 @@ TEST(MemoryVulkan, ImageTransferAndSupportedAttachments) {
 TEST(MemoryVulkan, RepeatedReuseAndBudget) {
     VulkanMemoryTest context;
     const bool       initialized = context.initialize();
-    if (context.unavailable) GTEST_SKIP() << "No Vulkan 1.1 graphics device available";
+    if (context.unavailable)
+        GTEST_SKIP() << "No Vulkan loader, ICD, or Vulkan 1.1 graphics device available";
     ASSERT_TRUE(initialized) << "Vulkan test context creation failed";
     {
-        auto result = vvk::MemoryAllocator::Create({ context.gpu, context.device, 1024 * 1024 });
+        auto result = vvk::MemoryAllocator::Create(
+            context.gpu, context.instance_dispatch, context.device_dispatch, 1024 * 1024);
         ASSERT_TRUE(result.is_ok());
         auto allocator = result.unwrap_unchecked();
         for (unsigned iteration = 0; iteration < 100; ++iteration) {
@@ -446,7 +498,7 @@ TEST(MemoryVulkan, RepeatedReuseAndBudget) {
         for (unsigned h = 0; h < snapshot.heap_count; ++h)
             EXPECT_EQ(snapshot.heaps[h].block_count, 0u);
         VkPhysicalDeviceMemoryProperties memory;
-        vkGetPhysicalDeviceMemoryProperties(context.gpu, &memory);
+        context.instance_dispatch.vkGetPhysicalDeviceMemoryProperties(context.gpu, &memory);
         bool non_coherent = false;
         for (unsigned i = 0; i < memory.memoryTypeCount; ++i)
             non_coherent |=
@@ -462,14 +514,15 @@ TEST(MemoryVulkan, RepeatedReuseAndBudget) {
 TEST(MemoryVulkan, RingUploadWrapAndSubmissionLifetime) {
     VulkanMemoryTest context;
     const bool       initialized = context.initialize();
-    if (context.unavailable) GTEST_SKIP() << "No Vulkan 1.1 graphics device available";
+    if (context.unavailable)
+        GTEST_SKIP() << "No Vulkan loader, ICD, or Vulkan 1.1 graphics device available";
     ASSERT_TRUE(initialized) << "Vulkan test context creation failed";
     {
-        const VkDeviceSize atom     = context.properties.limits.nonCoherentAtomSize;
-        const VkDeviceSize unit     = atom > 256 ? atom : 256;
-        const VkDeviceSize capacity = unit * 4;
-        auto               allocator_result =
-            vvk::MemoryAllocator::Create({ context.gpu, context.device, 1024 * 1024 });
+        const VkDeviceSize atom             = context.properties.limits.nonCoherentAtomSize;
+        const VkDeviceSize unit             = atom > 256 ? atom : 256;
+        const VkDeviceSize capacity         = unit * 4;
+        auto               allocator_result = vvk::MemoryAllocator::Create(
+            context.gpu, context.instance_dispatch, context.device_dispatch, 1024 * 1024);
         ASSERT_TRUE(allocator_result.is_ok());
         auto allocator = allocator_result.unwrap_unchecked();
         auto host      = vvk::MemoryRequest { .required           = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
@@ -494,6 +547,7 @@ TEST(MemoryVulkan, RingUploadWrapAndSubmissionLifetime) {
         auto write = write_result.unwrap_unchecked(), read = read_result.unwrap_unchecked();
         alloc::RingRangeAllocator ranges(capacity);
         struct Batch {
+            const vvk::DeviceDispatch* dispatch {};
             VkDevice                   device {};
             VkCommandPool              pool {};
             VkCommandBuffer            command {};
@@ -503,12 +557,12 @@ TEST(MemoryVulkan, RingUploadWrapAndSubmissionLifetime) {
             bool                       observed {};
             ~Batch() {
                 if (fence) {
-                    if (vkWaitForFences(device, 1, &fence, VK_TRUE, 10'000'000'000ULL) !=
+                    if (dispatch->vkWaitForFences(device, 1, &fence, VK_TRUE, 10'000'000'000ULL) !=
                         VK_SUCCESS)
-                        vkDeviceWaitIdle(device);
-                    vkDestroyFence(device, fence, nullptr);
+                        dispatch->vkDeviceWaitIdle(device);
+                    dispatch->vkDestroyFence(device, fence, nullptr);
                 }
-                if (command) vkFreeCommandBuffers(device, pool, 1, &command);
+                if (command) dispatch->vkFreeCommandBuffers(device, pool, 1, &command);
             }
         } batches[4];
         const VkDeviceSize sizes[] { unit * 2, unit, unit * 2, unit };
@@ -522,6 +576,7 @@ TEST(MemoryVulkan, RingUploadWrapAndSubmissionLifetime) {
             ASSERT_TRUE(result.is_ok());
             pending.range       = result.unwrap_unchecked();
             pending.device      = context.device;
+            pending.dispatch    = &context.device_dispatch;
             pending.pool        = context.pool;
             pending.source      = source.clone();
             pending.destination = destination.clone();
@@ -532,19 +587,21 @@ TEST(MemoryVulkan, RingUploadWrapAndSubmissionLifetime) {
             pending.command = context.begin();
             ASSERT_NE(pending.command, VK_NULL_HANDLE);
             VkBufferCopy upload { pending.range.offset, outputs[batch], sizes[batch] };
-            vkCmdCopyBuffer(
+            context.device_dispatch.vkCmdCopyBuffer(
                 pending.command, pending.source.handle(), pending.destination.handle(), 1, &upload);
-            TransferBarrier(pending.command,
+            TransferBarrier(context.device_dispatch,
+                            pending.command,
                             pending.destination.handle(),
                             VK_ACCESS_TRANSFER_READ_BIT,
                             VK_PIPELINE_STAGE_TRANSFER_BIT);
             VkBufferCopy download { outputs[batch], outputs[batch], sizes[batch] };
-            vkCmdCopyBuffer(pending.command,
-                            pending.destination.handle(),
-                            pending.readback.handle(),
-                            1,
-                            &download);
-            TransferBarrier(pending.command,
+            context.device_dispatch.vkCmdCopyBuffer(pending.command,
+                                                    pending.destination.handle(),
+                                                    pending.readback.handle(),
+                                                    1,
+                                                    &download);
+            TransferBarrier(context.device_dispatch,
+                            pending.command,
                             pending.readback.handle(),
                             VK_ACCESS_HOST_READ_BIT,
                             VK_PIPELINE_STAGE_HOST_BIT);
@@ -603,6 +660,34 @@ TEST(MemoryVulkan, RingUploadWrapAndSubmissionLifetime) {
         std::printf("vvk ring: four submissions, tail padding=%llu, wrapped upload and byte "
                     "readback verified\n",
                     static_cast<unsigned long long>(unit));
+    }
+    EXPECT_EQ(context.errors, 0u);
+}
+
+TEST(MemoryVulkan, VmaRuntimeDispatchBuffer) {
+    VulkanMemoryTest context;
+    bool             initialized = context.initialize();
+    if (context.unavailable)
+        GTEST_SKIP() << "No Vulkan loader, ICD, or Vulkan 1.1 graphics device available";
+    ASSERT_TRUE(initialized);
+    {
+        VmaAllocatorCreateInfo info {};
+        info.instance       = context.instance;
+        info.physicalDevice = context.gpu;
+        info.device         = context.device;
+        auto result         = vvk::CreateVmaAllocator(
+            info, *context.global, context.instance_dispatch, context.device_dispatch);
+        ASSERT_TRUE(result.is_ok());
+        auto                    allocator = rstd::move(result).unwrap_unchecked();
+        VmaAllocationCreateInfo allocation {};
+        allocation.usage = VMA_MEMORY_USAGE_GPU_ONLY;
+        vvk::VmaBuffer buffer;
+        EXPECT_EQ(vvk::CreateBuffer(*allocator,
+                                    BufferCreate(4096, VK_BUFFER_USAGE_TRANSFER_DST_BIT),
+                                    allocation,
+                                    buffer),
+                  VK_SUCCESS);
+        EXPECT_TRUE(bool(buffer));
     }
     EXPECT_EQ(context.errors, 0u);
 }

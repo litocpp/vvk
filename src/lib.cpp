@@ -1,5 +1,6 @@
 module;
 #include <cstring>
+#include <vulkan/vulkan.h>
 #include "vvk/macros.hpp"
 
 module vvk;
@@ -15,182 +16,11 @@ constexpr auto vk_count(usize value) noexcept -> rstd::uint32_t {
     return rstd::as_cast<rstd::uint32_t>(value);
 }
 
-template<typename T>
-bool Proc(T& result, const InstanceDispatch& dld, const char* proc_name,
-          VkInstance instance = nullptr) noexcept {
-    result = reinterpret_cast<T>(dld.vkGetInstanceProcAddr(instance, proc_name));
-    return result != nullptr;
-}
-
-template<typename T>
-void Proc(T& result, const DeviceDispatch& dld, const char* proc_name, VkDevice device) noexcept {
-    result = reinterpret_cast<T>(dld.vkGetDeviceProcAddr(device, proc_name));
-}
-
-bool Load(InstanceDispatch& dld) noexcept {
-    if (dld.vkGetInstanceProcAddr == nullptr) {
-        dld.vkGetInstanceProcAddr = vkGetInstanceProcAddr;
-    }
-    if (dld.vkGetInstanceProcAddr == nullptr) return false;
-#define X(name) Proc(dld.name, dld, #name)
-    return X(vkCreateInstance) && X(vkEnumerateInstanceExtensionProperties) &&
-           X(vkEnumerateInstanceLayerProperties);
-#undef X
-}
-
-bool Load(VkInstance instance, InstanceDispatch& dld) noexcept {
-#define X(name) Proc(dld.name, dld, #name, instance)
-    X(vkCreateDebugUtilsMessengerEXT);
-    X(vkDestroyDebugUtilsMessengerEXT);
-    X(vkDestroySurfaceKHR);
-    X(vkGetPhysicalDeviceFeatures2);
-    X(vkGetPhysicalDeviceProperties2);
-    X(vkGetPhysicalDeviceQueueFamilyProperties2);
-    X(vkGetPhysicalDeviceSurfaceCapabilitiesKHR);
-    X(vkGetPhysicalDeviceSurfaceFormatsKHR);
-    X(vkGetPhysicalDeviceSurfacePresentModesKHR);
-    X(vkGetPhysicalDeviceSurfaceSupportKHR);
-    X(vkGetSwapchainImagesKHR);
-    X(vkQueuePresentKHR);
-
-    return X(vkDestroyInstance) && X(vkCreateDevice) && X(vkDestroyDevice) && X(vkDestroyDevice) &&
-           X(vkEnumerateDeviceExtensionProperties) && X(vkEnumeratePhysicalDevices) &&
-           X(vkGetDeviceProcAddr) && X(vkGetPhysicalDeviceFeatures2) &&
-           X(vkGetPhysicalDeviceFormatProperties) && X(vkGetPhysicalDeviceMemoryProperties) &&
-           X(vkGetPhysicalDeviceMemoryProperties2) && X(vkGetPhysicalDeviceProperties) &&
-           X(vkGetPhysicalDeviceProperties2) && X(vkGetPhysicalDeviceQueueFamilyProperties) &&
-           X(vkGetPhysicalDeviceQueueFamilyProperties2);
-#undef X
-}
-
-bool Load(VkDevice device, DeviceDispatch& dld) noexcept {
-#define X(name) Proc(dld.name, dld, #name, device)
-    X(vkAcquireNextImageKHR);
-    X(vkAllocateCommandBuffers);
-    X(vkAllocateDescriptorSets);
-    X(vkAllocateMemory);
-    X(vkBeginCommandBuffer);
-    X(vkBindBufferMemory);
-    X(vkBindImageMemory);
-    X(vkBindImageMemory2);
-    X(vkCmdBeginQuery);
-    X(vkCmdBeginRenderPass);
-    X(vkCmdBindDescriptorSets);
-    X(vkCmdBindIndexBuffer);
-    X(vkCmdBindPipeline);
-    X(vkCmdBindVertexBuffers);
-    X(vkCmdBlitImage);
-    X(vkCmdClearColorImage);
-    X(vkCmdClearAttachments);
-    X(vkCmdCopyBuffer);
-    X(vkCmdCopyBufferToImage);
-    X(vkCmdCopyImage);
-    X(vkCmdCopyImageToBuffer);
-    X(vkCmdDispatch);
-    X(vkCmdDraw);
-    X(vkCmdDrawIndexed);
-    X(vkCmdEndQuery);
-    X(vkCmdEndRenderPass);
-    X(vkCmdEndDebugUtilsLabelEXT);
-    X(vkCmdFillBuffer);
-    X(vkCmdPipelineBarrier);
-    X(vkCmdPipelineBarrier2);
-    X(vkCmdPushConstants);
-    X(vkCmdPushDescriptorSetKHR);
-    X(vkCmdPushDescriptorSetWithTemplateKHR);
-    X(vkCmdSetBlendConstants);
-    X(vkCmdSetDepthBias);
-    X(vkCmdSetDepthBounds);
-    X(vkCmdSetEvent);
-    X(vkCmdSetScissor);
-    X(vkCmdSetStencilCompareMask);
-    X(vkCmdSetStencilReference);
-    X(vkCmdSetStencilWriteMask);
-    X(vkCmdSetViewport);
-    X(vkCmdWaitEvents);
-    X(vkCmdSetLineWidth);
-    X(vkCmdResolveImage);
-    X(vkCreateBuffer);
-    X(vkCreateBufferView);
-    X(vkCreateCommandPool);
-    X(vkCreateComputePipelines);
-    X(vkCreateDescriptorPool);
-    X(vkCreateDescriptorSetLayout);
-    X(vkCreateDescriptorUpdateTemplateKHR);
-    X(vkCreateEvent);
-    X(vkCreateFence);
-    X(vkCreateFramebuffer);
-    X(vkCreateGraphicsPipelines);
-    X(vkCreateImage);
-    X(vkCreateImageView);
-    X(vkCreatePipelineLayout);
-    X(vkCreateQueryPool);
-    X(vkCreateRenderPass);
-    X(vkCreateSampler);
-    X(vkCreateSemaphore);
-    X(vkCreateShaderModule);
-    X(vkCreateSwapchainKHR);
-    X(vkDestroyBuffer);
-    X(vkDestroyBufferView);
-    X(vkDestroyCommandPool);
-    X(vkDestroyDescriptorPool);
-    X(vkDestroyDescriptorSetLayout);
-    X(vkDestroyDescriptorUpdateTemplateKHR);
-    X(vkDestroyEvent);
-    X(vkDestroyFence);
-    X(vkDestroyFramebuffer);
-    X(vkDestroyImage);
-    X(vkDestroyImageView);
-    X(vkDestroyPipeline);
-    X(vkDestroyPipelineLayout);
-    X(vkDestroyQueryPool);
-    X(vkDestroyRenderPass);
-    X(vkDestroySampler);
-    X(vkDestroySemaphore);
-    X(vkDestroyShaderModule);
-    X(vkDestroySwapchainKHR);
-    X(vkDeviceWaitIdle);
-    X(vkEndCommandBuffer);
-    X(vkFreeCommandBuffers);
-    X(vkFreeDescriptorSets);
-    X(vkFreeMemory);
-    X(vkGetBufferMemoryRequirements2);
-    X(vkGetDeviceQueue);
-    X(vkGetEventStatus);
-    X(vkGetFenceStatus);
-    X(vkGetImageMemoryRequirements);
-    X(vkGetImageMemoryRequirements2);
-    X(vkGetImageSubresourceLayout);
-    X(vkGetMemoryFdKHR);
-    X(vkGetMemoryFdPropertiesKHR);
-    X(vkGetSemaphoreFdKHR);
-    X(vkGetImageDrmFormatModifierPropertiesEXT);
-    X(vkGetQueryPoolResults);
-    X(vkGetPipelineExecutablePropertiesKHR);
-    X(vkGetPipelineExecutableStatisticsKHR);
-    X(vkGetSemaphoreCounterValueKHR);
-    X(vkMapMemory);
-    X(vkFlushMappedMemoryRanges);
-    X(vkInvalidateMappedMemoryRanges);
-    X(vkQueueSubmit);
-    X(vkResetCommandBuffer);
-    X(vkResetFences);
-    X(vkSetDebugUtilsObjectNameEXT);
-    X(vkSetDebugUtilsObjectTagEXT);
-    X(vkUnmapMemory);
-    X(vkUpdateDescriptorSetWithTemplateKHR);
-    X(vkUpdateDescriptorSets);
-    X(vkWaitForFences);
-    X(vkWaitSemaphoresKHR);
-#undef X
-    return true;
-}
-
 void Destroy(VkInstance instance, const InstanceDispatch& dld) noexcept {
     dld.vkDestroyInstance(instance, nullptr);
 }
 
-void Destroy(VkDevice device, const InstanceDispatch& dld) noexcept {
+void Destroy(VkDevice device, const DeviceDispatch& dld) noexcept {
     dld.vkDestroyDevice(device, nullptr);
 }
 
@@ -266,42 +96,36 @@ VkResult Free(VkDevice device, VkCommandPool pool, slice<VkCommandBuffer> allos,
     return VK_SUCCESS;
 }
 
-VkResult Instance::Create(Instance& inst, const VkApplicationInfo& app_info,
-                          slice<const char*> layers, slice<const char*> extensions,
-                          InstanceDispatch& dld, const void* next) noexcept {
-    // MoltenVK is a portability driver: on Apple platforms the instance must
-    // request VK_KHR_portability_enumeration AND set the enumerator bit in the
-    // create flags, otherwise vkCreateInstance fails with
-    // VK_ERROR_INCOMPATIBLE_DRIVER. The bit value is the Khronos-defined
-    // VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR (0x00000001).
-    const uint32_t create_flags = [&] {
-        for (auto i = usize(0); i < extensions.len(); ++i) {
-            if (std::strcmp(extensions[i], "VK_KHR_portability_enumeration") == 0) {
-                return uint32_t(0x00000001);
-            }
-        }
-        return uint32_t(0);
-    }();
-    VkInstanceCreateInfo ci {
-        .sType                   = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
-        .pNext                   = next,
-        .flags                   = create_flags,
-        .pApplicationInfo        = &app_info,
-        .enabledLayerCount       = vk_count(layers.len()),
-        .ppEnabledLayerNames     = layers.as_raw_ptr(),
-        .enabledExtensionCount   = vk_count(extensions.len()),
-        .ppEnabledExtensionNames = extensions.as_raw_ptr(),
-    };
-
-    VkInstance instance;
-    VkResult   res = dld.vkCreateInstance(&ci, nullptr, &instance);
-    if (res == VK_SUCCESS) {
-        if (Proc(dld.vkDestroyInstance, dld, "vkDestroyInstance", instance))
-            inst = Instance(instance, dld);
+auto Instance::Create(Instance& inst, const GlobalDispatch& global,
+                      const VkInstanceCreateInfo& input, InstanceDispatch& dispatch)
+    -> Result<empty, DispatchError> {
+    if (inst || dispatch.instance || ! global.vkCreateInstance || ! global.vkGetInstanceProcAddr)
+        return Err(DispatchError { DispatchErrorKind::InvalidInput, DispatchStage::Instance });
+    auto parsed = ParseInstanceCapabilities(input);
+    if (parsed.is_err()) return Err(parsed.unwrap_err_unchecked());
+    auto caps = parsed.unwrap_unchecked();
+    auto info = input;
+    if (caps.portability_enumeration)
+        info.flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+    VkInstance instance {};
+    auto       result = global.vkCreateInstance(&info, nullptr, &instance);
+    if (result != VK_SUCCESS)
+        return Err(DispatchError {
+            DispatchErrorKind::Vulkan, DispatchStage::Instance, "vkCreateInstance", result });
+    auto loaded = LoadInstance(global, instance, caps);
+    if (loaded.is_err()) {
+        auto error   = loaded.unwrap_err_unchecked();
+        auto destroy = reinterpret_cast<PFN_vkDestroyInstance>(
+            global.vkGetInstanceProcAddr(instance, "vkDestroyInstance"));
+        if (destroy)
+            destroy(instance, nullptr);
         else
-            res = VK_ERROR_INITIALIZATION_FAILED;
+            error.unowned_instance = instance;
+        return Err(error);
     }
-    return res;
+    dispatch = loaded.unwrap_unchecked();
+    inst     = Instance(instance, dispatch);
+    return Ok(empty {});
 }
 
 rstd::vec::Vec<PhysicalDevice> Instance::EnumeratePhysicalDevices() const noexcept {
@@ -323,29 +147,35 @@ DebugUtilsMessenger Instance::CreateDebugUtilsMessenger(
     VVK_CHECK(dld->vkCreateDebugUtilsMessengerEXT(handle, &create_info, nullptr, &object));
     return DebugUtilsMessenger(object, handle, *dld);
 }
-VkResult Device::Create(Device& device, VkPhysicalDevice physical_device,
-                        slice<VkDeviceQueueCreateInfo> queues_ci,
-                        slice<const char*> enabled_extensions, const void* next,
-                        DeviceDispatch& dld, const VkPhysicalDeviceFeatures* enabled_features) {
-    const VkDeviceCreateInfo ci {
-        .sType                   = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
-        .pNext                   = next,
-        .flags                   = 0,
-        .queueCreateInfoCount    = vk_count(queues_ci.len()),
-        .pQueueCreateInfos       = queues_ci.as_raw_ptr(),
-        .enabledLayerCount       = 0,
-        .ppEnabledLayerNames     = nullptr,
-        .enabledExtensionCount   = vk_count(enabled_extensions.len()),
-        .ppEnabledExtensionNames = enabled_extensions.as_raw_ptr(),
-        .pEnabledFeatures        = enabled_features,
-    };
-    VkDevice vkdevice;
-    VkResult res = dld.vkCreateDevice(physical_device, &ci, nullptr, &vkdevice);
-    if (res == VK_SUCCESS) {
-        Load(vkdevice, dld);
-        device = Device(vkdevice, dld);
+auto Device::Create(Device& output, VkPhysicalDevice physical, const InstanceDispatch& parent,
+                    const VkDeviceCreateInfo& info, DeviceDispatch& dispatch)
+    -> Result<empty, DispatchError> {
+    if (output || dispatch.device || ! physical || ! parent.instance || ! parent.vkCreateDevice ||
+        ! parent.vkGetDeviceProcAddr || ! parent.vkGetPhysicalDeviceProperties)
+        return Err(DispatchError { DispatchErrorKind::InvalidInput, DispatchStage::Device });
+    VkPhysicalDeviceProperties properties {};
+    parent.vkGetPhysicalDeviceProperties(physical, &properties);
+    auto parsed = ParseDeviceCapabilities(info, parent.capabilities, properties.apiVersion);
+    if (parsed.is_err()) return Err(parsed.unwrap_err_unchecked());
+    VkDevice device {};
+    auto     result = parent.vkCreateDevice(physical, &info, nullptr, &device);
+    if (result != VK_SUCCESS)
+        return Err(DispatchError {
+            DispatchErrorKind::Vulkan, DispatchStage::Device, "vkCreateDevice", result });
+    auto loaded = LoadDevice(parent, device, parsed.unwrap_unchecked());
+    if (loaded.is_err()) {
+        auto error   = loaded.unwrap_err_unchecked();
+        auto destroy = reinterpret_cast<PFN_vkDestroyDevice>(
+            parent.vkGetDeviceProcAddr(device, "vkDestroyDevice"));
+        if (destroy)
+            destroy(device, nullptr);
+        else
+            error.unowned_device = device;
+        return Err(error);
     }
-    return res;
+    dispatch = loaded.unwrap_unchecked();
+    output   = Device(device, dispatch);
+    return Ok(empty {});
 }
 
 Queue Device::GetQueue(rstd::uint32_t family_index) const noexcept {
@@ -684,7 +514,7 @@ VkResult DeviceMemory::GetMemoryFdKHR(int* fd) const {
 }
 
 rstd::Option<rstd::vec::Vec<VkExtensionProperties>>
-EnumerateInstanceExtensionProperties(const InstanceDispatch& dld) {
+EnumerateInstanceExtensionProperties(const GlobalDispatch& dld) {
     rstd::uint32_t num;
     if (dld.vkEnumerateInstanceExtensionProperties(nullptr, &num, nullptr) != VK_SUCCESS) {
         return rstd::None();
@@ -699,7 +529,7 @@ EnumerateInstanceExtensionProperties(const InstanceDispatch& dld) {
 }
 
 rstd::Option<rstd::vec::Vec<VkLayerProperties>>
-EnumerateInstanceLayerProperties(const InstanceDispatch& dld) {
+EnumerateInstanceLayerProperties(const GlobalDispatch& dld) {
     rstd::uint32_t num;
     if (dld.vkEnumerateInstanceLayerProperties(&num, nullptr) != VK_SUCCESS) {
         return rstd::None();

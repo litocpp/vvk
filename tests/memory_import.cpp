@@ -4,7 +4,7 @@ import vvk;
 
 TEST(Memory, ModuleOnlyPublicInterface) {
     vvk::DeviceDispatch dispatch {};
-    auto                memory_dispatch = vvk::MemoryDispatch::FromDeviceDispatch(dispatch);
+    auto memory_dispatch = vvk::MemoryDispatch::FromDispatch(vvk::InstanceDispatch {}, dispatch);
     EXPECT_FALSE(memory_dispatch.valid());
     VkMemoryDedicatedRequirements dedicated { VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS };
     EXPECT_EQ(dedicated.requiresDedicatedAllocation, 0u);

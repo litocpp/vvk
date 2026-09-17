@@ -18,12 +18,16 @@ pub = true
 version = "0.1.0"
 pub = true
 
+[dependencies.rstd-dlopn]
+version = "0.1.0"
+pub = true
+
 [dependencies.rstd-log]
 version = "0.1.0"
 
 [external-dependencies.cmake.vulkan]
-package = "Vulkan"
-targets = [{ name = "Vulkan::Vulkan", pub = true }]
+package = "VulkanHeaders"
+targets = [{ name = "Vulkan::Headers", pub = true }]
 
 [external-sources.vma]
 git = "https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git"
@@ -41,7 +45,7 @@ targets = [{ name = "GPUOpen::VulkanMemoryAllocator", pub = true }]
 
 [[test]]
 name = "vvk-memory-tests"
-sources = ["tests/main.cpp", "tests/memory.cpp", "tests/memory_vulkan.cpp", "tests/memory_import.cpp"]
+sources = ["tests/main.cpp", "tests/memory.cpp", "tests/memory_vulkan.cpp", "tests/memory_import.cpp", "tests/dispatch.cpp"]
 
 [dev-dependencies]
 rstd-test = { version = "0.1.0" }
