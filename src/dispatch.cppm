@@ -46,7 +46,7 @@ struct InstanceCapabilities {
 };
 struct DeviceCapabilities {
     rstd::uint32_t api_version { VK_API_VERSION_1_1 };
-    bool           swapchain {}, memory_budget {}, debug_utils {};
+    bool           swapchain {}, memory_budget {}, debug_utils {}, image_format_list {};
     bool           timeline_semaphore {}, timeline_extension {};
     bool           synchronization2 {}, synchronization2_extension {};
     bool           push_descriptor {}, external_memory_fd {}, external_semaphore_fd {},

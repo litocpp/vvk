@@ -412,3 +412,20 @@ TEST(Loader, SharedLibraryLifetime) {
     ASSERT_EQ(event_count, 5u);
     for (unsigned i = 0; i < 5; ++i) EXPECT_EQ(events[i], int(i + 1));
 }
+
+TEST(Dispatch, ImageFormatListCapability) {
+    vvk::InstanceCapabilities parent;
+    VkDeviceCreateInfo        info { VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
+    auto                      parse = [&](unsigned physical) {
+        return vvk::ParseDeviceCapabilities(info, parent, physical).unwrap_unchecked();
+    };
+    EXPECT_FALSE(parse(VK_API_VERSION_1_2).image_format_list);
+    parent.api_version = VK_API_VERSION_1_2;
+    EXPECT_TRUE(parse(VK_API_VERSION_1_2).image_format_list);
+    EXPECT_FALSE(parse(VK_API_VERSION_1_1).image_format_list);
+    parent.api_version           = VK_API_VERSION_1_1;
+    const char* extension        = VK_KHR_IMAGE_FORMAT_LIST_EXTENSION_NAME;
+    info.enabledExtensionCount   = 1;
+    info.ppEnabledExtensionNames = &extension;
+    EXPECT_TRUE(parse(VK_API_VERSION_1_1).image_format_list);
+}

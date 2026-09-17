@@ -31,6 +31,8 @@ struct FakeMemory {
     bool                driver_budget {}, device_lost {};
     VkDeviceSize        budget { 8192 };
     VkMappedMemoryRange last_range {};
+    VkImageCreateFlags  image_flags {};
+    const void*         image_chain {};
 }* fake;
 template<typename T>
 T handle(unsigned id) {
@@ -103,8 +105,11 @@ VKAPI_ATTR void VKAPI_CALL DestroyBuffer(VkDevice, VkBuffer buffer, const VkAllo
     fake->buffers[index(buffer)].live = false;
     ++fake->destroys;
 }
-VKAPI_ATTR VkResult VKAPI_CALL CreateImage(VkDevice, const VkImageCreateInfo*,
+VKAPI_ATTR VkResult VKAPI_CALL CreateImage(VkDevice, const VkImageCreateInfo*     info,
                                            const VkAllocationCallbacks*, VkImage* out) {
+    if (fake->fail_create) return VK_ERROR_OUT_OF_DEVICE_MEMORY;
+    fake->image_flags    = info->flags;
+    fake->image_chain    = info->pNext;
     auto i               = fake->next_image++;
     fake->images[i].live = true;
     *out                 = handle<VkImage>(i);
@@ -175,7 +180,8 @@ VKAPI_ATTR VkResult VKAPI_CALL Invalidate(VkDevice, unsigned count,
     ++fake->invalidates;
     return VK_SUCCESS;
 }
-auto MakeAllocator(vvk::MemoryMetadata metadata = alloc::allocator_ref(alloc::GLOBAL)) {
+auto MakeAllocator(vvk::MemoryMetadata metadata    = alloc::allocator_ref(alloc::GLOBAL),
+                   bool                format_list = false) {
     vvk::MemoryDispatch dispatch { Properties,
                                    MemoryProperties,
                                    Allocate,
@@ -193,7 +199,8 @@ auto MakeAllocator(vvk::MemoryMetadata metadata = alloc::allocator_ref(alloc::GL
                                    Flush,
                                    Invalidate };
     return vvk::MemoryAllocator::Create(
-        { handle<VkPhysicalDevice>(1), handle<VkDevice>(1), 1024, true, dispatch }, metadata);
+        { handle<VkPhysicalDevice>(1), handle<VkDevice>(1), 1024, true, dispatch, format_list },
+        metadata);
 }
 auto BufferInfo(VkDeviceSize size = 73) -> VkBufferCreateInfo {
     return {
@@ -531,4 +538,131 @@ TEST(Memory, RingSubmissionCompletionAndAtomIsolation) {
     EXPECT_EQ(reused.offset, 0u);
     EXPECT_TRUE(ranges.release(first.id).is_err());
     EXPECT_TRUE(ranges.release(reused.id).is_ok());
+}
+
+TEST(Memory, ImageConstraintsAndBorrowedChain) {
+    FakeMemory context;
+    fake           = &context;
+    auto allocator = MakeAllocator(alloc::allocator_ref(alloc::GLOBAL), true).unwrap_unchecked();
+    VkFormat                    formats[] { VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_R8G8B8A8_SRGB };
+    VkImageFormatListCreateInfo list {
+        VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO, nullptr, 2, formats
+    };
+    auto info        = ImageInfo();
+    info.flags       = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT | VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
+    info.arrayLayers = 6;
+    info.pNext       = &list;
+    {
+        auto image = allocator.create_image(info);
+        ASSERT_TRUE(image.is_ok());
+        EXPECT_EQ(fake->image_flags, info.flags);
+        EXPECT_EQ(fake->image_chain, &list);
+        EXPECT_EQ(fake->queries, 1u);
+    }
+    auto reject = [&](vvk::MemoryErrorKind kind) {
+        auto result = allocator.create_image(info);
+        ASSERT_TRUE(result.is_err());
+        EXPECT_EQ(result.unwrap_err_unchecked().kind, kind);
+        EXPECT_EQ(fake->creates, 1u);
+        EXPECT_EQ(fake->queries, 1u);
+    };
+    list.pNext = &list;
+    reject(vvk::MemoryErrorKind::InvalidRequest);
+    VkImageFormatListCreateInfo duplicate = list;
+    duplicate.pNext                       = nullptr;
+    list.pNext                            = &duplicate;
+    reject(vvk::MemoryErrorKind::InvalidRequest);
+    VkExternalMemoryImageCreateInfo external {
+        VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO
+    };
+    list.pNext = &external;
+    reject(vvk::MemoryErrorKind::Unsupported);
+    list.pNext        = nullptr;
+    list.pViewFormats = nullptr;
+    reject(vvk::MemoryErrorKind::InvalidRequest);
+    list.pViewFormats = formats;
+    formats[1]        = VK_FORMAT_UNDEFINED;
+    reject(vvk::MemoryErrorKind::InvalidRequest);
+    formats[1] = VK_FORMAT_R8G8B8A8_SRGB;
+    info.flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
+    reject(vvk::MemoryErrorKind::InvalidRequest);
+    info.flags |= VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
+    info.extent.height = 2;
+    reject(vvk::MemoryErrorKind::InvalidRequest);
+    info.extent.height = 4;
+    info.arrayLayers   = 5;
+    reject(vvk::MemoryErrorKind::InvalidRequest);
+    info.arrayLayers = 6;
+    info.imageType   = VK_IMAGE_TYPE_3D;
+    reject(vvk::MemoryErrorKind::InvalidRequest);
+    info.imageType = VK_IMAGE_TYPE_2D;
+    info.samples   = VK_SAMPLE_COUNT_4_BIT;
+    reject(vvk::MemoryErrorKind::InvalidRequest);
+    info.samples = VK_SAMPLE_COUNT_1_BIT;
+    const VkImageCreateFlags unsupported_flags[] { VK_IMAGE_CREATE_SPARSE_BINDING_BIT,
+                                                   VK_IMAGE_CREATE_DISJOINT_BIT,
+                                                   VK_IMAGE_CREATE_PROTECTED_BIT,
+                                                   VK_IMAGE_CREATE_ALIAS_BIT };
+    for (auto flag : unsupported_flags) {
+        info.flags = flag;
+        reject(vvk::MemoryErrorKind::Unsupported);
+    }
+    info.flags              = VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
+    auto without_capability = MakeAllocator().unwrap_unchecked();
+    auto rejected           = without_capability.create_image(info);
+    ASSERT_TRUE(rejected.is_err());
+    EXPECT_EQ(rejected.unwrap_err_unchecked().kind, vvk::MemoryErrorKind::Unsupported);
+    info.flags           = 0;
+    list.viewFormatCount = 0;
+    list.pViewFormats    = nullptr;
+    EXPECT_TRUE(allocator.create_image(info).is_ok());
+    list.viewFormatCount = 1;
+    list.pViewFormats    = formats;
+    EXPECT_TRUE(allocator.create_image(info).is_ok());
+    info.pNext = nullptr;
+    info.flags = VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
+    EXPECT_TRUE(without_capability.create_image(info).is_ok());
+}
+
+TEST(Memory, CompatibleImageFailureRollback) {
+    bool succeeded = false;
+    for (int failure = 0; failure < 24; ++failure) {
+        FakeMemory context;
+        fake = &context;
+        MemoryFailMetadata metadata { failure < 4 ? -1 : failure - 4 };
+        {
+            auto made = MakeAllocator(alloc::allocator_ref(metadata), true);
+            if (made.is_ok()) {
+                auto allocator = made.unwrap_unchecked();
+                auto info      = ImageInfo();
+                info.flags =
+                    VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT | VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
+                info.arrayLayers                   = 6;
+                VkFormat                    format = info.format;
+                VkImageFormatListCreateInfo list {
+                    VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO, nullptr, 1, &format
+                };
+                info.pNext          = &list;
+                fake->fail_create   = failure == 0;
+                fake->fail_allocate = failure == 1;
+                fake->fail_bind     = failure == 2;
+                fake->device_lost   = failure == 3;
+                {
+                    auto image = allocator.create_image(info);
+                    succeeded |= image.is_ok();
+                    if (failure < 4) {
+                        ASSERT_TRUE(image.is_err());
+                    }
+                    if (failure == 3)
+                        EXPECT_EQ(image.unwrap_err_unchecked().api_result, VK_ERROR_DEVICE_LOST);
+                    EXPECT_EQ(fake->queries, fake->creates);
+                }
+                EXPECT_EQ(allocator.budget().heaps[0].allocation_count, 0u);
+            }
+        }
+        EXPECT_EQ(metadata.live, 0);
+        EXPECT_EQ(fake->creates, fake->destroys);
+        EXPECT_EQ(fake->allocations, fake->frees);
+    }
+    EXPECT_TRUE(succeeded);
 }

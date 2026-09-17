@@ -3,6 +3,11 @@ import rstd;
 import vvk;
 
 TEST(Memory, ModuleOnlyPublicInterface) {
+    VkImageCreateInfo image { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
+    image.flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT | VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
+    VkImageFormatListCreateInfo formats { VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO };
+    image.pNext = &formats;
+    EXPECT_NE(image.flags, 0u);
     vvk::DeviceDispatch dispatch {};
     auto memory_dispatch = vvk::MemoryDispatch::FromDispatch(vvk::InstanceDispatch {}, dispatch);
     EXPECT_FALSE(memory_dispatch.valid());

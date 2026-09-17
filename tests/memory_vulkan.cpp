@@ -47,7 +47,7 @@ struct VulkanMemoryTest {
         }
         return VK_FALSE;
     }
-    bool initialize() {
+    bool initialize(unsigned api = VK_API_VERSION_1_1, bool format_list_extension = false) {
         auto opened = vvk::VulkanLoader::Open();
         if (opened.is_err()) {
             auto error  = opened.unwrap_err_unchecked();
@@ -55,8 +55,16 @@ struct VulkanMemoryTest {
             std::fprintf(stderr, "vvk loader failed: kind=%u\n", unsigned(error.kind));
             return false;
         }
-        loader               = Some(rstd::move(opened).unwrap_unchecked());
-        global               = &loader->global();
+        loader                 = Some(rstd::move(opened).unwrap_unchecked());
+        global                 = &loader->global();
+        unsigned supported_api = VK_API_VERSION_1_0;
+        if (global->vkEnumerateInstanceVersion &&
+            global->vkEnumerateInstanceVersion(&supported_api) != VK_SUCCESS)
+            return false;
+        if (supported_api < api) {
+            unavailable = true;
+            return false;
+        }
         rstd::uint32_t count = 0;
         if (global->vkEnumerateInstanceLayerProperties(&count, nullptr) != VK_SUCCESS) return false;
         auto layers = alloc::vec::Vec<VkLayerProperties>::with_capacity(usize(count));
@@ -66,15 +74,11 @@ struct VulkanMemoryTest {
             return false;
         for (const auto& layer : layers)
             if (std::strcmp(layer.layerName, "VK_LAYER_KHRONOS_validation") == 0) validation = true;
-        const char*          layer_name = "VK_LAYER_KHRONOS_validation";
-        const char*          extension  = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
-        VkApplicationInfo    application { VK_STRUCTURE_TYPE_APPLICATION_INFO,
-                                           nullptr,
-                                           "vvk-memory-tests",
-                                           1,
-                                           nullptr,
-                                           0,
-                                           VK_API_VERSION_1_1 };
+        const char*       layer_name = "VK_LAYER_KHRONOS_validation";
+        const char*       extension  = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
+        VkApplicationInfo application {
+            VK_STRUCTURE_TYPE_APPLICATION_INFO, nullptr, "vvk-memory-tests", 1, nullptr, 0, api
+        };
         VkInstanceCreateInfo info { VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO };
         info.pApplicationInfo = &application;
         if (validation) {
@@ -125,7 +129,7 @@ struct VulkanMemoryTest {
         for (auto candidate : devices) {
             VkPhysicalDeviceProperties candidate_properties;
             instance_dispatch.vkGetPhysicalDeviceProperties(candidate, &candidate_properties);
-            if (candidate_properties.apiVersion < VK_API_VERSION_1_1) continue;
+            if (candidate_properties.apiVersion < api) continue;
             unsigned families = 0;
             instance_dispatch.vkGetPhysicalDeviceQueueFamilyProperties(
                 candidate, &families, nullptr);
@@ -153,6 +157,30 @@ struct VulkanMemoryTest {
         VkDeviceCreateInfo device_info { VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
         device_info.queueCreateInfoCount = 1;
         device_info.pQueueCreateInfos    = &queue_info;
+        const char* format_list_name     = VK_KHR_IMAGE_FORMAT_LIST_EXTENSION_NAME;
+        if (format_list_extension) {
+            unsigned extension_count = 0;
+            if (instance_dispatch.vkEnumerateDeviceExtensionProperties(
+                    gpu, nullptr, &extension_count, nullptr) != VK_SUCCESS)
+                return false;
+            auto extensions =
+                alloc::vec::Vec<VkExtensionProperties>::with_capacity(usize(extension_count));
+            for (unsigned i = 0; i < extension_count; ++i)
+                extensions.push(VkExtensionProperties {});
+            if (instance_dispatch.vkEnumerateDeviceExtensionProperties(
+                    gpu, nullptr, &extension_count, extensions.as_mut_ptr().as_raw_ptr()) !=
+                VK_SUCCESS)
+                return false;
+            bool supported = false;
+            for (const auto& item : extensions)
+                supported |= std::strcmp(item.extensionName, format_list_name) == 0;
+            if (! supported) {
+                unavailable = true;
+                return false;
+            }
+            device_info.enabledExtensionCount   = 1;
+            device_info.ppEnabledExtensionNames = &format_list_name;
+        }
         auto created =
             vvk::Device::Create(device_owner, gpu, instance_dispatch, device_info, device_dispatch);
         if (created.is_err()) {
@@ -328,11 +356,15 @@ TEST(MemoryVulkan, UploadSlicesAndSubmissionLifetime) {
     EXPECT_EQ(context.errors, 0u);
 }
 
-TEST(MemoryVulkan, ImageTransferAndSupportedAttachments) {
+namespace
+{
+void CheckImageTransfer(VkImageCreateFlags flags, bool format_list = false,
+                        unsigned api = VK_API_VERSION_1_1) {
     VulkanMemoryTest context;
-    const bool       initialized = context.initialize();
+    const bool       initialized = context.initialize(api, format_list && api < VK_API_VERSION_1_2);
     if (context.unavailable)
-        GTEST_SKIP() << "No Vulkan loader, ICD, or Vulkan 1.1 graphics device available";
+        GTEST_SKIP()
+            << "Requested Vulkan API, graphics device or image format list extension unavailable";
     ASSERT_TRUE(initialized) << "Vulkan test context creation failed";
     {
         auto allocator_result = vvk::MemoryAllocator::Create(
@@ -344,18 +376,62 @@ TEST(MemoryVulkan, ImageTransferAndSupportedAttachments) {
         image_info.format    = VK_FORMAT_R8G8B8A8_UNORM;
         image_info.extent    = { 16, 16, 1 };
         image_info.mipLevels = image_info.arrayLayers = 1;
-        image_info.samples                            = VK_SAMPLE_COUNT_1_BIT;
-        image_info.tiling                             = VK_IMAGE_TILING_OPTIMAL;
-        image_info.usage  = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+        image_info.flags                              = flags;
+        if (flags & VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT) image_info.arrayLayers = 6;
+        const auto                  layers      = image_info.arrayLayers;
+        const auto                  bytes_count = 1024 * layers;
+        const VkFormat              formats[] { VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_R8G8B8A8_SRGB };
+        VkImageFormatListCreateInfo list {
+            VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO, nullptr, 2, formats
+        };
+        if (format_list) image_info.pNext = &list;
+        image_info.samples = VK_SAMPLE_COUNT_1_BIT;
+        image_info.tiling  = VK_IMAGE_TILING_OPTIMAL;
+        image_info.usage   = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+                             VK_IMAGE_USAGE_SAMPLED_BIT;
+        VkImageFormatProperties supported_image {};
+        auto                    supported_result =
+            context.instance_dispatch.vkGetPhysicalDeviceImageFormatProperties(context.gpu,
+                                                                               image_info.format,
+                                                                               image_info.imageType,
+                                                                               image_info.tiling,
+                                                                               image_info.usage,
+                                                                               flags,
+                                                                               &supported_image);
+        if (supported_result == VK_ERROR_FORMAT_NOT_SUPPORTED)
+            GTEST_SKIP() << "Requested image format/flags unsupported";
+        ASSERT_EQ(supported_result, VK_SUCCESS);
         auto image_result = allocator.create_image(image_info);
         ASSERT_TRUE(image_result.is_ok());
         auto image = image_result.unwrap_unchecked();
-        auto host  = vvk::MemoryRequest { .required  = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
-                                          .preferred = VK_MEMORY_PROPERTY_HOST_COHERENT_BIT };
+        struct Views {
+            VulkanMemoryTest& context;
+            VkImageView       handles[2] {};
+            ~Views() {
+                for (auto view : handles)
+                    if (view)
+                        context.device_dispatch.vkDestroyImageView(context.device, view, nullptr);
+            }
+        } views { context };
+        if (flags) {
+            VkImageViewCreateInfo view { VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
+            view.image            = image.handle();
+            view.viewType         = layers == 6 ? VK_IMAGE_VIEW_TYPE_CUBE : VK_IMAGE_VIEW_TYPE_2D;
+            view.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, layers };
+            const unsigned count  = (flags & VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT) ? 2 : 1;
+            for (unsigned i = 0; i < count; ++i) {
+                view.format = formats[i];
+                ASSERT_EQ(context.device_dispatch.vkCreateImageView(
+                              context.device, &view, nullptr, &views.handles[i]),
+                          VK_SUCCESS);
+            }
+        }
+        auto host = vvk::MemoryRequest { .required  = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
+                                         .preferred = VK_MEMORY_PROPERTY_HOST_COHERENT_BIT };
         auto stage_result = allocator.create_buffer(
-                 BufferCreate(1024, VK_BUFFER_USAGE_TRANSFER_SRC_BIT), host),
+                 BufferCreate(bytes_count, VK_BUFFER_USAGE_TRANSFER_SRC_BIT), host),
              read_result = allocator.create_buffer(
-                 BufferCreate(1024, VK_BUFFER_USAGE_TRANSFER_DST_BIT), host);
+                 BufferCreate(bytes_count, VK_BUFFER_USAGE_TRANSFER_DST_BIT), host);
         ASSERT_TRUE(stage_result.is_ok());
         ASSERT_TRUE(read_result.is_ok());
         auto stage = stage_result.unwrap_unchecked(), readback = read_result.unwrap_unchecked();
@@ -364,9 +440,26 @@ TEST(MemoryVulkan, ImageTransferAndSupportedAttachments) {
         ASSERT_TRUE(write_result.is_ok());
         auto  write = write_result.unwrap_unchecked();
         auto* bytes = static_cast<unsigned char*>(write.data());
-        for (unsigned i = 0; i < 1024; ++i) bytes[i] = static_cast<unsigned char>(i * 17U);
+        for (unsigned i = 0; i < bytes_count; ++i)
+            bytes[i] = static_cast<unsigned char>(i * 17U + i / 1024);
         ASSERT_TRUE(stage_memory.flush().is_ok());
-        auto command = context.begin();
+        struct Submission {
+            VulkanMemoryTest& context;
+            VkCommandBuffer   command {};
+            VkFence           fence {};
+            bool              completed {};
+            ~Submission() {
+                if (fence) {
+                    if (! completed && ! context.wait(fence))
+                        context.device_dispatch.vkDeviceWaitIdle(context.device);
+                    context.device_dispatch.vkDestroyFence(context.device, fence, nullptr);
+                }
+                if (command)
+                    context.device_dispatch.vkFreeCommandBuffers(
+                        context.device, context.pool, 1, &command);
+            }
+        } submission { context };
+        auto command = submission.command = context.begin();
         ASSERT_NE(command, VK_NULL_HANDLE);
         VkImageMemoryBarrier barrier { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
         barrier.dstAccessMask       = VK_ACCESS_TRANSFER_WRITE_BIT;
@@ -374,7 +467,7 @@ TEST(MemoryVulkan, ImageTransferAndSupportedAttachments) {
         barrier.newLayout           = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
         barrier.srcQueueFamilyIndex = barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         barrier.image                                             = image.handle();
-        barrier.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+        barrier.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, layers };
         context.device_dispatch.vkCmdPipelineBarrier(command,
                                                      VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                                                      VK_PIPELINE_STAGE_TRANSFER_BIT,
@@ -386,7 +479,7 @@ TEST(MemoryVulkan, ImageTransferAndSupportedAttachments) {
                                                      1,
                                                      &barrier);
         VkBufferImageCopy copy {};
-        copy.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+        copy.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, layers };
         copy.imageExtent      = { 16, 16, 1 };
         context.device_dispatch.vkCmdCopyBufferToImage(command,
                                                        stage.handle(),
@@ -419,57 +512,74 @@ TEST(MemoryVulkan, ImageTransferAndSupportedAttachments) {
                         readback.handle(),
                         VK_ACCESS_HOST_READ_BIT,
                         VK_PIPELINE_STAGE_HOST_BIT);
-        auto fence = context.submit(command);
+        auto fence = submission.fence = context.submit(command);
         ASSERT_NE(fence, VK_NULL_HANDLE);
-        ASSERT_TRUE(context.wait(fence));
+        submission.completed = context.wait(fence);
+        ASSERT_TRUE(submission.completed);
         auto mapped_result = read_memory.map();
         ASSERT_TRUE(mapped_result.is_ok());
         auto mapped = mapped_result.unwrap_unchecked();
         ASSERT_TRUE(read_memory.invalidate().is_ok());
-        EXPECT_EQ(std::memcmp(write.data(), mapped.data(), 1024), 0);
-        context.device_dispatch.vkDestroyFence(context.device, fence, nullptr);
-        context.device_dispatch.vkFreeCommandBuffers(context.device, context.pool, 1, &command);
-        unsigned       attachments = 0;
-        const VkFormat depth_formats[] { VK_FORMAT_D32_SFLOAT, VK_FORMAT_D16_UNORM };
-        for (auto format : depth_formats) {
+        EXPECT_EQ(std::memcmp(write.data(), mapped.data(), bytes_count), 0);
+        if (! flags) {
+            unsigned       attachments = 0;
+            const VkFormat depth_formats[] { VK_FORMAT_D32_SFLOAT, VK_FORMAT_D16_UNORM };
+            for (auto format : depth_formats) {
+                VkImageFormatProperties supported {};
+                if (context.instance_dispatch.vkGetPhysicalDeviceImageFormatProperties(
+                        context.gpu,
+                        format,
+                        VK_IMAGE_TYPE_2D,
+                        VK_IMAGE_TILING_OPTIMAL,
+                        VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+                        0,
+                        &supported) != VK_SUCCESS)
+                    continue;
+                image_info.format = format;
+                image_info.usage  = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+                auto depth        = allocator.create_image(image_info);
+                ASSERT_TRUE(depth.is_ok());
+                ++attachments;
+                break;
+            }
+            EXPECT_GT(attachments, 0u);
             VkImageFormatProperties supported {};
             if (context.instance_dispatch.vkGetPhysicalDeviceImageFormatProperties(
                     context.gpu,
-                    format,
+                    VK_FORMAT_R8G8B8A8_UNORM,
                     VK_IMAGE_TYPE_2D,
                     VK_IMAGE_TILING_OPTIMAL,
-                    VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+                    VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
                     0,
-                    &supported) != VK_SUCCESS)
-                continue;
-            image_info.format = format;
-            image_info.usage  = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
-            auto depth        = allocator.create_image(image_info);
-            ASSERT_TRUE(depth.is_ok());
-            ++attachments;
-            break;
+                    &supported) == VK_SUCCESS &&
+                (supported.sampleCounts & VK_SAMPLE_COUNT_4_BIT)) {
+                image_info.format  = VK_FORMAT_R8G8B8A8_UNORM;
+                image_info.usage   = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+                image_info.samples = VK_SAMPLE_COUNT_4_BIT;
+                auto msaa          = allocator.create_image(image_info);
+                ASSERT_TRUE(msaa.is_ok());
+                std::printf("vvk MSAA: 4x verified\n");
+            } else
+                std::printf("vvk MSAA: 4x unavailable, not covered\n");
         }
-        EXPECT_GT(attachments, 0u);
-        VkImageFormatProperties supported {};
-        if (context.instance_dispatch.vkGetPhysicalDeviceImageFormatProperties(
-                context.gpu,
-                VK_FORMAT_R8G8B8A8_UNORM,
-                VK_IMAGE_TYPE_2D,
-                VK_IMAGE_TILING_OPTIMAL,
-                VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
-                0,
-                &supported) == VK_SUCCESS &&
-            (supported.sampleCounts & VK_SAMPLE_COUNT_4_BIT)) {
-            image_info.format  = VK_FORMAT_R8G8B8A8_UNORM;
-            image_info.usage   = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-            image_info.samples = VK_SAMPLE_COUNT_4_BIT;
-            auto msaa          = allocator.create_image(image_info);
-            ASSERT_TRUE(msaa.is_ok());
-            std::printf("vvk MSAA: 4x verified\n");
-        } else
-            std::printf("vvk MSAA: 4x unavailable, not covered\n");
     }
     EXPECT_EQ(context.errors, 0u);
+}
+} // namespace
+
+TEST(MemoryVulkan, ImageTransferAndSupportedAttachments) { CheckImageTransfer(0); }
+TEST(MemoryVulkan, CubeImageTransferAndView) {
+    CheckImageTransfer(VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT);
+}
+TEST(MemoryVulkan, MutableImageTransferAndViews) {
+    CheckImageTransfer(VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT);
+}
+TEST(MemoryVulkan, FormatListExtensionTransferAndViews) {
+    CheckImageTransfer(VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT | VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT,
+                       true);
+}
+TEST(MemoryVulkan, FormatListCoreTransferAndViews) {
+    CheckImageTransfer(VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT, true, VK_API_VERSION_1_2);
 }
 
 TEST(MemoryVulkan, RepeatedReuseAndBudget) {

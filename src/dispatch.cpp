@@ -56,6 +56,8 @@ auto ParseDeviceCapabilities(const VkDeviceCreateInfo& info, const InstanceCapab
     if (caps.swapchain && ! parent.surface)
         return Err(DispatchError {
             DispatchErrorKind::Unsupported, DispatchStage::Device, "VK_KHR_surface" });
+    caps.image_format_list =
+        caps.api_version >= VK_API_VERSION_1_2 || enabled("VK_KHR_image_format_list");
     caps.memory_budget                 = enabled("VK_EXT_memory_budget");
     caps.timeline_extension            = enabled("VK_KHR_timeline_semaphore");
     caps.synchronization2_extension    = enabled("VK_KHR_synchronization2");

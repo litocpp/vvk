@@ -79,14 +79,17 @@ struct MemoryAllocatorCreateInfo {
     // Set only when VK_EXT_memory_budget was enabled on this device.
     bool           memory_budget_enabled {};
     MemoryDispatch dispatch {};
+    // Core Vulkan 1.2 or enabled VK_KHR_image_format_list.
+    bool image_format_list_enabled {};
     MemoryAllocatorCreateInfo() = default;
     MemoryAllocatorCreateInfo(VkPhysicalDevice physical, VkDevice device, VkDeviceSize block,
-                              bool budget, MemoryDispatch dispatch)
+                              bool budget, MemoryDispatch dispatch, bool image_format_list = false)
         : physical_device(physical),
           device(device),
           block_size(block),
           memory_budget_enabled(budget),
-          dispatch(dispatch) {}
+          dispatch(dispatch),
+          image_format_list_enabled(image_format_list) {}
 };
 struct MemoryRequest {
     VkMemoryPropertyFlags required {};
@@ -159,6 +162,61 @@ enum class MemoryClass
     Linear,
     Optimal
 };
+struct ResourceMemoryConstraints {
+    MemoryClass resource_class;
+};
+auto ParseResourceMemoryConstraints(const VkBufferCreateInfo& info)
+    -> Result<ResourceMemoryConstraints, MemoryError> {
+    if (info.sType != VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO || info.size == 0 || info.usage == 0)
+        return Err(MemoryError { MemoryErrorKind::InvalidRequest });
+    constexpr VkBufferUsageFlags supported =
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+        VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_TEXEL_BUFFER_BIT |
+        VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+        VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
+        VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
+    if (info.flags || info.pNext || (info.usage & ~supported))
+        return Err(MemoryError { MemoryErrorKind::Unsupported });
+    return Ok(ResourceMemoryConstraints { MemoryClass::Linear });
+}
+auto ParseResourceMemoryConstraints(const VkImageCreateInfo& info, bool format_list_enabled)
+    -> Result<ResourceMemoryConstraints, MemoryError> {
+    if (info.sType != VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO || ! info.extent.width ||
+        ! info.extent.height || ! info.extent.depth || ! info.mipLevels || ! info.arrayLayers ||
+        ! info.usage)
+        return Err(MemoryError { MemoryErrorKind::InvalidRequest });
+    constexpr VkImageUsageFlags supported =
+        VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+        VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT |
+        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
+        VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT | VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT;
+    constexpr VkImageCreateFlags supported_flags =
+        VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT | VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
+    if ((info.flags & ~supported_flags) || (info.usage & ~supported) ||
+        (info.tiling != VK_IMAGE_TILING_LINEAR && info.tiling != VK_IMAGE_TILING_OPTIMAL))
+        return Err(MemoryError { MemoryErrorKind::Unsupported });
+    if ((info.flags & VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT) &&
+        (info.imageType != VK_IMAGE_TYPE_2D || info.extent.width != info.extent.height ||
+         info.extent.depth != 1 || info.arrayLayers < 6 || info.samples != VK_SAMPLE_COUNT_1_BIT))
+        return Err(MemoryError { MemoryErrorKind::InvalidRequest });
+    bool saw_format_list = false;
+    for (auto* next = static_cast<const VkBaseInStructure*>(info.pNext); next; next = next->pNext) {
+        if (next->sType != VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO)
+            return Err(MemoryError { MemoryErrorKind::Unsupported });
+        if (saw_format_list) return Err(MemoryError { MemoryErrorKind::InvalidRequest });
+        saw_format_list = true;
+        if (! format_list_enabled) return Err(MemoryError { MemoryErrorKind::Unsupported });
+        const auto& list = *reinterpret_cast<const VkImageFormatListCreateInfo*>(next);
+        if ((list.viewFormatCount && ! list.pViewFormats) ||
+            (! (info.flags & VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT) && list.viewFormatCount > 1))
+            return Err(MemoryError { MemoryErrorKind::InvalidRequest });
+        for (unsigned i = 0; i < list.viewFormatCount; ++i)
+            if (list.pViewFormats[i] == VK_FORMAT_UNDEFINED)
+                return Err(MemoryError { MemoryErrorKind::InvalidRequest });
+    }
+    return Ok(ResourceMemoryConstraints {
+        info.tiling == VK_IMAGE_TILING_OPTIMAL ? MemoryClass::Optimal : MemoryClass::Linear });
+}
 struct MemoryBlock {
     MemoryState*                          owner;
     VkDeviceMemory                        memory {};
@@ -527,7 +585,8 @@ public:
                         device.device,
                         block_size,
                         device.capabilities.memory_budget,
-                        MemoryDispatch::FromDispatch(instance, device) },
+                        MemoryDispatch::FromDispatch(instance, device),
+                        device.capabilities.image_format_list },
                       metadata);
     }
     static auto Create(MemoryAllocatorCreateInfo info,
@@ -551,6 +610,8 @@ public:
         }
         return Ok(MemoryAllocator(state));
     }
+    // Create infos must satisfy Vulkan valid usage, including format compatibility.
+    // Supported pNext data is borrowed only until the creation call returns.
     auto create_buffer(const VkBufferCreateInfo& info, MemoryRequest request = {}) const
         -> Result<AllocatedBuffer, MemoryError>;
     auto create_image(const VkImageCreateInfo& info, MemoryRequest request = {}) const
@@ -727,18 +788,11 @@ auto MemoryAllocator::allocate(const VkMemoryRequirements&          req,
 
 auto MemoryAllocator::create_buffer(const VkBufferCreateInfo& info, MemoryRequest request) const
     -> Result<AllocatedBuffer, MemoryError> {
-    if (! state_ || info.sType != VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO || info.size == 0 ||
-        info.usage == 0)
-        return Err(MemoryError { MemoryErrorKind::InvalidRequest });
-    constexpr VkBufferUsageFlags supported =
-        VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
-        VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_TEXEL_BUFFER_BIT |
-        VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-        VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
-        VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
-    if (info.flags || info.pNext || (info.usage & ~supported))
-        return Err(MemoryError { MemoryErrorKind::Unsupported });
-    VkBuffer buffer {};
+    if (! state_) return Err(MemoryError { MemoryErrorKind::InvalidRequest });
+    auto parsed = ParseResourceMemoryConstraints(info);
+    if (parsed.is_err()) return Err(parsed.unwrap_err_unchecked());
+    const auto constraints = parsed.unwrap_unchecked();
+    VkBuffer   buffer {};
     auto result = state_->info.dispatch.create_buffer(state_->info.device, &info, nullptr, &buffer);
     if (result != VK_SUCCESS) return Err(ApiMemoryError(result));
     VkMemoryDedicatedRequirements dedicated { VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS };
@@ -749,7 +803,7 @@ auto MemoryAllocator::create_buffer(const VkBufferCreateInfo& info, MemoryReques
     state_->info.dispatch.buffer_requirements(state_->info.device, &query, &requirements);
     auto allocation = allocate(requirements.memoryRequirements,
                                dedicated,
-                               MemoryClass::Linear,
+                               constraints.resource_class,
                                buffer,
                                VK_NULL_HANDLE,
                                request);
@@ -775,19 +829,11 @@ auto MemoryAllocator::create_buffer(const VkBufferCreateInfo& info, MemoryReques
 }
 auto MemoryAllocator::create_image(const VkImageCreateInfo& info, MemoryRequest request) const
     -> Result<AllocatedImage, MemoryError> {
-    if (! state_ || info.sType != VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO || ! info.extent.width ||
-        ! info.extent.height || ! info.extent.depth || ! info.mipLevels || ! info.arrayLayers ||
-        ! info.usage)
-        return Err(MemoryError { MemoryErrorKind::InvalidRequest });
-    constexpr VkImageUsageFlags supported =
-        VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
-        VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT |
-        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
-        VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT | VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT;
-    if (info.flags || info.pNext || (info.usage & ~supported) ||
-        (info.tiling != VK_IMAGE_TILING_LINEAR && info.tiling != VK_IMAGE_TILING_OPTIMAL))
-        return Err(MemoryError { MemoryErrorKind::Unsupported });
-    VkImage image {};
+    if (! state_) return Err(MemoryError { MemoryErrorKind::InvalidRequest });
+    auto parsed = ParseResourceMemoryConstraints(info, state_->info.image_format_list_enabled);
+    if (parsed.is_err()) return Err(parsed.unwrap_err_unchecked());
+    const auto constraints = parsed.unwrap_unchecked();
+    VkImage    image {};
     auto result = state_->info.dispatch.create_image(state_->info.device, &info, nullptr, &image);
     if (result != VK_SUCCESS) return Err(ApiMemoryError(result));
     VkMemoryDedicatedRequirements dedicated { VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS };
@@ -798,8 +844,7 @@ auto MemoryAllocator::create_image(const VkImageCreateInfo& info, MemoryRequest 
     state_->info.dispatch.image_requirements(state_->info.device, &query, &requirements);
     auto allocation = allocate(requirements.memoryRequirements,
                                dedicated,
-                               info.tiling == VK_IMAGE_TILING_OPTIMAL ? MemoryClass::Optimal
-                                                                      : MemoryClass::Linear,
+                               constraints.resource_class,
                                VK_NULL_HANDLE,
                                image,
                                request);
