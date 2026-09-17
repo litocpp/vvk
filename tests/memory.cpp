@@ -40,10 +40,12 @@ struct FakeMemory {
         unsigned     type;
         bool         dedicated;
     } attempts[256] {};
-    unsigned            attempt_count {};
-    VkMappedMemoryRange last_range {};
-    VkImageCreateFlags  image_flags {};
-    const void*         image_chain {};
+    VkPhysicalDeviceMemoryProperties topology {};
+    unsigned                         requirement_types { 3 }, reject_types {};
+    unsigned                         attempt_count {};
+    VkMappedMemoryRange              last_range {};
+    VkImageCreateFlags               image_flags {};
+    const void*                      image_chain {};
 }* fake;
 template<typename T>
 T handle(unsigned id) {
@@ -74,6 +76,7 @@ VKAPI_ATTR void VKAPI_CALL MemoryProperties(VkPhysicalDevice,
     p->memoryProperties.memoryTypeCount     = 2;
     p->memoryProperties.memoryTypes[0]      = { VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, 0 };
     p->memoryProperties.memoryTypes[1]      = { VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 0 };
+    if (fake->topology.memoryTypeCount) p->memoryProperties = fake->topology;
     if (p->pNext) {
         ++fake->budget_queries;
         auto* b          = static_cast<VkPhysicalDeviceMemoryBudgetPropertiesEXT*>(p->pNext);
@@ -87,6 +90,7 @@ VKAPI_ATTR VkResult VKAPI_CALL Allocate(VkDevice, const VkMemoryAllocateInfo*   
     fake->attempts[fake->attempt_count++] = { info->allocationSize,
                                               info->memoryTypeIndex,
                                               separate };
+    if (fake->reject_types & (1u << info->memoryTypeIndex)) return VK_ERROR_OUT_OF_DEVICE_MEMORY;
     if (fake->allocation_error != VK_SUCCESS) return fake->allocation_error;
     if ((separate && fake->reject_dedicated) || (! separate && fake->reject_shared) ||
         info->allocationSize > fake->max_success_size)
@@ -149,7 +153,7 @@ VKAPI_ATTR void VKAPI_CALL DestroyImage(VkDevice, VkImage image, const VkAllocat
 }
 void Requirements(VkMemoryRequirements2* req, VkDeviceSize size) {
     ++fake->queries;
-    req->memoryRequirements = { size, 16, 3 };
+    req->memoryRequirements = { size, 16, fake->requirement_types };
     auto* dedicated         = static_cast<VkMemoryDedicatedRequirements*>(req->pNext);
     EXPECT_NE(dedicated, nullptr);
     dedicated->requiresDedicatedAllocation = fake->dedicated;
@@ -1061,4 +1065,243 @@ TEST(Memory, DefaultPolicyGrowthAndRecovery) {
         EXPECT_EQ(fake->allocations, fake->frees);
         EXPECT_EQ(fake->creates, fake->destroys);
     }
+}
+
+namespace
+{
+void DiscreteTopology(FakeMemory& context) {
+    auto& memory           = context.topology;
+    memory.memoryHeapCount = 2;
+    memory.memoryHeaps[0]  = { 1024 * 1024, VK_MEMORY_HEAP_DEVICE_LOCAL_BIT };
+    memory.memoryHeaps[1]  = { 1024 * 1024, 0 };
+    memory.memoryTypeCount = 4;
+    memory.memoryTypes[0]  = { VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 0 };
+    memory.memoryTypes[1]  = {
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, 1
+    };
+    memory.memoryTypes[2] = {
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT, 1
+    };
+    memory.memoryTypes[3]     = { VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT |
+                                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                      VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                                  0 };
+    context.requirement_types = 15;
+}
+} // namespace
+TEST(Memory, HostAccessAndPlacementSelection) {
+    FakeMemory context;
+    fake = &context;
+    DiscreteTopology(context);
+    auto allocator = MakeAllocator().unwrap_unchecked();
+    auto check     = [&](vvk::MemoryRequest         request,
+                         VkBufferUsageFlags         usage,
+                         unsigned                   type,
+                         vvk::MemoryPlacementReason reason) {
+        auto info   = BufferInfo();
+        info.usage  = usage;
+        auto result = allocator.create_buffer(info, request);
+        ASSERT_TRUE(result.is_ok());
+        auto buffer   = result.unwrap_unchecked();
+        auto selected = buffer.allocation().info();
+        EXPECT_EQ(selected.memory_type, type);
+        EXPECT_EQ(selected.heap, context.topology.memoryTypes[type].heapIndex);
+        EXPECT_EQ(selected.selection.placement_reason, reason);
+        if (request.host_access != vvk::MemoryHostAccess::None || request.persistent_mapping)
+            EXPECT_TRUE(selected.selection.required & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
+    };
+    check({}, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, 0, vvk::MemoryPlacementReason::AutomaticDevice);
+    check(vvk::MemoryRequest::Upload(),
+          VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+          1,
+          vvk::MemoryPlacementReason::AutomaticHost);
+    check(vvk::MemoryRequest::Upload(),
+          VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+          3,
+          vvk::MemoryPlacementReason::AutomaticDevice);
+    check(vvk::MemoryRequest::Readback(),
+          VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+          2,
+          vvk::MemoryPlacementReason::AutomaticHost);
+    auto upload       = vvk::MemoryRequest::Upload();
+    upload.preference = vvk::MemoryPreference::Host;
+    check(upload, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, 1, vvk::MemoryPlacementReason::RequestedHost);
+    upload.preference = vvk::MemoryPreference::Device;
+    check(upload, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, 3, vvk::MemoryPlacementReason::RequestedDevice);
+    check({ .persistent_mapping = true },
+          VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+          3,
+          vvk::MemoryPlacementReason::AutomaticDevice);
+    for (unsigned direct = 0; direct < 2; ++direct) {
+        auto image_info = ImageInfo();
+        if (direct) image_info.usage |= VK_IMAGE_USAGE_SAMPLED_BIT;
+        auto result = allocator.create_image(image_info, vvk::MemoryRequest::Upload());
+        ASSERT_TRUE(result.is_ok());
+        auto image = result.unwrap_unchecked();
+        EXPECT_EQ(image.allocation().info().memory_type, direct ? 3u : 1u);
+    }
+}
+
+TEST(Memory, ExplicitFlagsAndHardConstraints) {
+    FakeMemory context;
+    fake = &context;
+    DiscreteTopology(context);
+    auto allocator   = MakeAllocator().unwrap_unchecked();
+    auto upload      = vvk::MemoryRequest::Upload();
+    upload.preferred = VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
+    auto result      = allocator.create_buffer(BufferInfo(), upload);
+    ASSERT_TRUE(result.is_ok());
+    auto buffer   = result.unwrap_unchecked();
+    auto selected = buffer.allocation().info();
+    EXPECT_EQ(selected.memory_type, 2u);
+    EXPECT_EQ(selected.selection.explicit_preferred, VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
+    EXPECT_TRUE(selected.selection.avoided & VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
+    auto readback     = vvk::MemoryRequest::Readback();
+    readback.required = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+    auto local        = allocator.create_buffer(BufferInfo(), readback);
+    ASSERT_TRUE(local.is_ok());
+    auto local_buffer = local.unwrap_unchecked();
+    EXPECT_EQ(local_buffer.allocation().info().memory_type, 3u);
+    readback.required |= VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
+    auto impossible = allocator.create_buffer(BufferInfo(), readback);
+    ASSERT_TRUE(impossible.is_err());
+    EXPECT_EQ(impossible.unwrap_err_unchecked().kind, vvk::MemoryErrorKind::NoMemoryType);
+    context.requirement_types = 1;
+    auto restricted = allocator.create_buffer(BufferInfo(), vvk::MemoryRequest::Readback());
+    ASSERT_TRUE(restricted.is_err());
+    EXPECT_EQ(restricted.unwrap_err_unchecked().kind, vvk::MemoryErrorKind::NoMemoryType);
+    EXPECT_EQ(restricted.unwrap_err_unchecked().device_allocation_attempts, 0u);
+    context.requirement_types = 15;
+    auto flags = allocator.create_buffer(BufferInfo(),
+                                         { .required   = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
+                                           .preferred  = VK_MEMORY_PROPERTY_HOST_CACHED_BIT,
+                                           .preference = vvk::MemoryPreference::FlagsOnly });
+    ASSERT_TRUE(flags.is_ok());
+    auto flags_buffer = flags.unwrap_unchecked();
+    auto detail       = flags_buffer.allocation().info();
+    EXPECT_EQ(detail.memory_type, 2u);
+    EXPECT_EQ(detail.selection.preferred, 0u);
+    EXPECT_EQ(detail.selection.avoided, 0u);
+    EXPECT_EQ(detail.selection.placement_reason, vvk::MemoryPlacementReason::ExplicitFlags);
+}
+
+TEST(Memory, FlagsOnlyWithoutInferredPreferences) {
+    FakeMemory context;
+    fake           = &context;
+    auto allocator = MakeAllocator().unwrap_unchecked();
+    auto result =
+        allocator.create_buffer(BufferInfo(), { .preference = vvk::MemoryPreference::FlagsOnly });
+    ASSERT_TRUE(result.is_ok());
+    auto buffer = result.unwrap_unchecked();
+    EXPECT_EQ(buffer.allocation().info().memory_type, 0u);
+    auto automatic = allocator.create_buffer(BufferInfo());
+    ASSERT_TRUE(automatic.is_ok());
+    auto automatic_buffer = automatic.unwrap_unchecked();
+    EXPECT_EQ(automatic_buffer.allocation().info().memory_type, 1u);
+    auto request       = vvk::MemoryRequest::Upload();
+    request.preference = vvk::MemoryPreference::FlagsOnly;
+    request.preferred  = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+    auto mapped        = allocator.create_buffer(BufferInfo(), request);
+    ASSERT_TRUE(mapped.is_ok());
+    auto mapped_buffer = mapped.unwrap_unchecked();
+    EXPECT_EQ(mapped_buffer.allocation().info().memory_type, 0u);
+}
+
+TEST(Memory, UnifiedMemoryAndUncachedReadback) {
+    for (unsigned mode = 0; mode < 2; ++mode) {
+        FakeMemory context;
+        fake                             = &context;
+        context.topology.memoryHeapCount = 1;
+        context.topology.memoryHeaps[0]  = { 1024 * 1024, VK_MEMORY_HEAP_DEVICE_LOCAL_BIT };
+        context.topology.memoryTypeCount = 1;
+        context.topology.memoryTypes[0]  = {
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                VK_MEMORY_PROPERTY_HOST_COHERENT_BIT |
+                (mode == 0 ? VkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_CACHED_BIT) : 0u),
+            0
+        };
+        context.requirement_types = 1;
+        auto allocator            = MakeAllocator().unwrap_unchecked();
+        auto request = mode == 0 ? vvk::MemoryRequest::Upload() : vvk::MemoryRequest::Readback();
+        auto result  = allocator.create_buffer(BufferInfo(), request);
+        ASSERT_TRUE(result.is_ok());
+        auto buffer = result.unwrap_unchecked();
+        EXPECT_EQ(buffer.allocation().info().memory_type, 0u);
+        EXPECT_EQ(buffer.allocation().info().heap, 0u);
+    }
+}
+
+TEST(Memory, SelectionFallbackAndSharedHeapAccounting) {
+    FakeMemory context;
+    fake = &context;
+    DiscreteTopology(context);
+    auto allocator = MakeAllocator().unwrap_unchecked();
+    auto readback  = allocator.create_buffer(BufferInfo(), vvk::MemoryRequest::Readback());
+    ASSERT_TRUE(readback.is_ok());
+    auto first   = readback.unwrap_unchecked();
+    auto memory  = first.allocation();
+    auto mapping = memory.map();
+    ASSERT_TRUE(mapping.is_ok());
+    EXPECT_TRUE(memory.invalidate().is_ok());
+    EXPECT_EQ(context.invalidates, 1u);
+    auto upload = allocator.create_buffer(BufferInfo(), vvk::MemoryRequest::Upload());
+    ASSERT_TRUE(upload.is_ok());
+    auto second   = upload.unwrap_unchecked();
+    auto snapshot = allocator.budget();
+    EXPECT_EQ(snapshot.heaps[1].block_count, 2u);
+    EXPECT_EQ(snapshot.heaps[1].allocation_count, 2u);
+    context.reject_types = 1 << 2;
+    auto fallback        = allocator.create_buffer(
+        BufferInfo(512), { .dedicated = true, .host_access = vvk::MemoryHostAccess::Random });
+    ASSERT_TRUE(fallback.is_ok());
+    auto third    = fallback.unwrap_unchecked();
+    auto selected = third.allocation().info();
+    EXPECT_EQ(selected.memory_type, 1u);
+    EXPECT_TRUE(selected.selection.type_fallback);
+    EXPECT_EQ(selected.selection.device_allocation_attempts, 2u);
+    EXPECT_EQ(selected.selection.dedicated_reason, vvk::MemoryDedicatedReason::Requested);
+    auto lease = third.allocation();
+    third.reset();
+    EXPECT_EQ(lease.info().selection.dedicated_reason, vvk::MemoryDedicatedReason::Requested);
+}
+
+TEST(Memory, DedicatedSelectionReasons) {
+    for (unsigned mode = 0; mode < 5; ++mode) {
+        FakeMemory context;
+        fake                     = &context;
+        context.dedicated        = mode == 0;
+        context.prefer_dedicated = mode == 2;
+        context.reject_shared    = mode == 4;
+        auto allocator =
+            MakeAllocator(alloc::allocator_ref(alloc::GLOBAL), false, { 1024, 1024, 0, true })
+                .unwrap_unchecked();
+        auto result =
+            allocator.create_buffer(BufferInfo(mode == 3 ? 600 : 73), { .dedicated = mode == 1 });
+        ASSERT_TRUE(result.is_ok());
+        auto                             buffer = result.unwrap_unchecked();
+        const vvk::MemoryDedicatedReason reasons[] { vvk::MemoryDedicatedReason::Required,
+                                                     vvk::MemoryDedicatedReason::Requested,
+                                                     vvk::MemoryDedicatedReason::DriverPreferred,
+                                                     vvk::MemoryDedicatedReason::LargeResource,
+                                                     vvk::MemoryDedicatedReason::SharedExhausted };
+        EXPECT_EQ(buffer.allocation().info().selection.dedicated_reason, reasons[mode]);
+    }
+}
+
+TEST(Memory, InvalidAccessIntentRollsBack) {
+    FakeMemory context;
+    fake                = &context;
+    auto allocator      = MakeAllocator().unwrap_unchecked();
+    auto invalid        = vvk::MemoryRequest {};
+    invalid.host_access = static_cast<vvk::MemoryHostAccess>(99);
+    auto first          = allocator.create_buffer(BufferInfo(), invalid);
+    ASSERT_TRUE(first.is_err());
+    EXPECT_EQ(first.unwrap_err_unchecked().kind, vvk::MemoryErrorKind::InvalidRequest);
+    invalid            = {};
+    invalid.preference = static_cast<vvk::MemoryPreference>(99);
+    auto second        = allocator.create_image(ImageInfo(), invalid);
+    ASSERT_TRUE(second.is_err());
+    EXPECT_EQ(second.unwrap_err_unchecked().kind, vvk::MemoryErrorKind::InvalidRequest);
+    EXPECT_EQ(fake->attempt_count, 0u);
+    EXPECT_EQ(fake->creates, fake->destroys);
 }

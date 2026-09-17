@@ -359,7 +359,8 @@ TEST(MemoryVulkan, UploadSlicesAndSubmissionLifetime) {
 namespace
 {
 void CheckImageTransfer(VkImageCreateFlags flags, bool format_list = false,
-                        unsigned api = VK_API_VERSION_1_1, vvk::MemoryBlockPolicy policy = {}) {
+                        unsigned api = VK_API_VERSION_1_1, vvk::MemoryBlockPolicy policy = {},
+                        bool access_intent = false) {
     VulkanMemoryTest context;
     const bool       initialized = context.initialize(api, format_list && api < VK_API_VERSION_1_2);
     if (context.unavailable)
@@ -429,13 +430,32 @@ void CheckImageTransfer(VkImageCreateFlags flags, bool format_list = false,
         auto host = vvk::MemoryRequest { .required  = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
                                          .preferred = VK_MEMORY_PROPERTY_HOST_COHERENT_BIT };
         auto stage_result = allocator.create_buffer(
-                 BufferCreate(bytes_count, VK_BUFFER_USAGE_TRANSFER_SRC_BIT), host),
+                 BufferCreate(bytes_count, VK_BUFFER_USAGE_TRANSFER_SRC_BIT),
+                 access_intent ? vvk::MemoryRequest::Upload() : host),
              read_result = allocator.create_buffer(
-                 BufferCreate(bytes_count, VK_BUFFER_USAGE_TRANSFER_DST_BIT), host);
+                 BufferCreate(bytes_count, VK_BUFFER_USAGE_TRANSFER_DST_BIT),
+                 access_intent ? vvk::MemoryRequest::Readback() : host);
         ASSERT_TRUE(stage_result.is_ok());
         ASSERT_TRUE(read_result.is_ok());
         auto stage = stage_result.unwrap_unchecked(), readback = read_result.unwrap_unchecked();
         auto stage_memory = stage.allocation(), read_memory = readback.allocation();
+        if (access_intent) {
+            const auto upload_info = stage_memory.info(), readback_info = read_memory.info();
+            EXPECT_TRUE(upload_info.properties & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
+            EXPECT_TRUE(readback_info.properties & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
+            EXPECT_EQ(upload_info.selection.placement_reason,
+                      vvk::MemoryPlacementReason::AutomaticHost);
+            EXPECT_EQ(readback_info.selection.placement_reason,
+                      vvk::MemoryPlacementReason::AutomaticHost);
+            std::printf(
+                "vvk intent: upload type=%u heap=%u flags=%x; readback type=%u heap=%u flags=%x\n",
+                upload_info.memory_type,
+                upload_info.heap,
+                upload_info.properties,
+                readback_info.memory_type,
+                readback_info.heap,
+                readback_info.properties);
+        }
         auto write_result = stage_memory.map();
         ASSERT_TRUE(write_result.is_ok());
         auto  write = write_result.unwrap_unchecked();
@@ -846,4 +866,8 @@ TEST(MemoryVulkan, GrowingAllocatorChurnAndTrim) {
         }
     }
     EXPECT_EQ(context.errors, 0u);
+}
+
+TEST(MemoryVulkan, AccessIntentImageReadback) {
+    CheckImageTransfer(VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT, false, VK_API_VERSION_1_1, {}, true);
 }

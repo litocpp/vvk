@@ -16,6 +16,11 @@ TEST(Memory, ModuleOnlyPublicInterface) {
     auto invalid = vvk::MemoryAllocator::Create({});
     ASSERT_TRUE(invalid.is_err());
     EXPECT_EQ(invalid.unwrap_err_unchecked().kind, vvk::MemoryErrorKind::InvalidRequest);
+    auto upload       = vvk::MemoryRequest::Upload();
+    upload.required   = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
+    upload.preferred  = VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    upload.preference = vvk::MemoryPreference::FlagsOnly;
+    EXPECT_EQ(upload.host_access, vvk::MemoryHostAccess::SequentialWrite);
     vvk::AllocatedBuffer buffer;
     EXPECT_FALSE(buffer.valid());
     EXPECT_FALSE(buffer.allocation().valid());

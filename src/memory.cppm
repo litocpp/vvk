@@ -106,12 +106,62 @@ struct MemoryAllocatorCreateInfo {
           image_format_list_enabled(image_format_list),
           block_policy(policy) {}
 };
+enum class MemoryHostAccess
+{
+    None,
+    SequentialWrite,
+    Random
+};
+enum class MemoryPreference
+{
+    Automatic,
+    Device,
+    Host,
+    FlagsOnly
+};
+enum class MemoryPlacementReason
+{
+    AutomaticDevice,
+    AutomaticHost,
+    RequestedDevice,
+    RequestedHost,
+    ExplicitFlags
+};
+enum class MemoryDedicatedReason
+{
+    None,
+    Required,
+    Requested,
+    DriverPreferred,
+    LargeResource,
+    SharedExhausted
+};
+struct MemorySelectionInfo {
+    VkMemoryPropertyFlags required {}, explicit_preferred {}, preferred {}, avoided {};
+    MemoryPlacementReason placement_reason { MemoryPlacementReason::AutomaticDevice };
+    MemoryDedicatedReason dedicated_reason { MemoryDedicatedReason::None };
+    bool                  type_fallback {};
+    rstd::uint32_t        device_allocation_attempts {};
+};
 struct MemoryRequest {
     VkMemoryPropertyFlags required {};
-    VkMemoryPropertyFlags preferred { VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT };
+    // Explicit preferences rank ahead of inferred access and placement preferences.
+    VkMemoryPropertyFlags preferred {};
     bool                  dedicated {};
     bool                  persistent_mapping {};
     bool                  within_budget {};
+    MemoryHostAccess      host_access { MemoryHostAccess::None };
+    MemoryPreference      preference { MemoryPreference::Automatic };
+    static MemoryRequest  Upload() {
+        MemoryRequest result;
+        result.host_access = MemoryHostAccess::SequentialWrite;
+        return result;
+    }
+    static MemoryRequest Readback() {
+        MemoryRequest result;
+        result.host_access = MemoryHostAccess::Random;
+        return result;
+    }
 };
 struct MemoryInfo {
     VkDeviceMemory        memory {};
@@ -119,6 +169,8 @@ struct MemoryInfo {
     rstd::uint32_t        memory_type {};
     VkMemoryPropertyFlags properties {};
     bool                  dedicated {};
+    rstd::uint32_t        heap {};
+    MemorySelectionInfo   selection {};
 };
 enum class MemoryBudgetSource
 {
@@ -179,6 +231,7 @@ enum class MemoryClass
 };
 struct ResourceMemoryConstraints {
     MemoryClass resource_class;
+    bool        device_access;
 };
 auto ParseResourceMemoryConstraints(const VkBufferCreateInfo& info)
     -> Result<ResourceMemoryConstraints, MemoryError> {
@@ -192,7 +245,9 @@ auto ParseResourceMemoryConstraints(const VkBufferCreateInfo& info)
         VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
     if (info.flags || info.pNext || (info.usage & ~supported))
         return Err(MemoryError { MemoryErrorKind::Unsupported });
-    return Ok(ResourceMemoryConstraints { MemoryClass::Linear });
+    return Ok(ResourceMemoryConstraints { MemoryClass::Linear,
+                                          bool(info.usage & ~(VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
+                                                              VK_BUFFER_USAGE_TRANSFER_DST_BIT)) });
 }
 auto ParseResourceMemoryConstraints(const VkImageCreateInfo& info, bool format_list_enabled)
     -> Result<ResourceMemoryConstraints, MemoryError> {
@@ -230,7 +285,73 @@ auto ParseResourceMemoryConstraints(const VkImageCreateInfo& info, bool format_l
                 return Err(MemoryError { MemoryErrorKind::InvalidRequest });
     }
     return Ok(ResourceMemoryConstraints {
-        info.tiling == VK_IMAGE_TILING_OPTIMAL ? MemoryClass::Optimal : MemoryClass::Linear });
+        info.tiling == VK_IMAGE_TILING_OPTIMAL ? MemoryClass::Optimal : MemoryClass::Linear,
+        bool(info.usage & ~(VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT)) });
+}
+struct MemoryTypePreferences {
+    MemorySelectionInfo   info;
+    VkMemoryPropertyFlags access_preferred {}, access_avoided {}, placement_preferred {},
+        placement_avoided {};
+    bool           prefer_coherent {};
+    rstd::uint32_t score(VkMemoryPropertyFlags flags) const {
+        const auto explicit_misses  = __builtin_popcount(info.explicit_preferred & ~flags);
+        const auto access_misses    = __builtin_popcount(access_preferred & ~flags) +
+                                      __builtin_popcount(access_avoided & flags);
+        const auto placement_misses = __builtin_popcount(placement_preferred & ~flags) +
+                                      __builtin_popcount(placement_avoided & flags);
+        const auto coherence_misses =
+            prefer_coherent && ! (flags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        // Disjoint fields preserve lexicographic priority; soft preferences never filter types.
+        return (rstd::uint32_t(explicit_misses) << 16) | (rstd::uint32_t(access_misses) << 8) |
+               (rstd::uint32_t(placement_misses) << 1) | coherence_misses;
+    }
+};
+auto ParseMemoryTypePreferences(MemoryRequest request, const ResourceMemoryConstraints& resource)
+    -> Result<MemoryTypePreferences, MemoryError> {
+    if (request.host_access != MemoryHostAccess::None &&
+        request.host_access != MemoryHostAccess::SequentialWrite &&
+        request.host_access != MemoryHostAccess::Random)
+        return Err(MemoryError { MemoryErrorKind::InvalidRequest });
+    MemoryTypePreferences result;
+    result.info.required           = request.required;
+    result.info.explicit_preferred = request.preferred;
+    if (request.host_access != MemoryHostAccess::None || request.persistent_mapping)
+        result.info.required |= VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
+    switch (request.preference) {
+    case MemoryPreference::FlagsOnly:
+        result.info.placement_reason = MemoryPlacementReason::ExplicitFlags;
+        return Ok(result);
+    case MemoryPreference::Automatic:
+        result.info.placement_reason =
+            request.host_access == MemoryHostAccess::Random ||
+                    (request.host_access == MemoryHostAccess::SequentialWrite &&
+                     ! resource.device_access)
+                ? MemoryPlacementReason::AutomaticHost
+                : MemoryPlacementReason::AutomaticDevice;
+        break;
+    case MemoryPreference::Device:
+        result.info.placement_reason = MemoryPlacementReason::RequestedDevice;
+        break;
+    case MemoryPreference::Host:
+        result.info.placement_reason = MemoryPlacementReason::RequestedHost;
+        break;
+    default: return Err(MemoryError { MemoryErrorKind::InvalidRequest });
+    }
+    if (request.host_access == MemoryHostAccess::Random)
+        result.access_preferred = VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
+    else if (request.host_access == MemoryHostAccess::SequentialWrite)
+        result.access_avoided = VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
+    if (result.info.placement_reason == MemoryPlacementReason::AutomaticHost ||
+        result.info.placement_reason == MemoryPlacementReason::RequestedHost)
+        result.placement_avoided = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+    else
+        result.placement_preferred = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+    result.prefer_coherent =
+        request.host_access != MemoryHostAccess::None || request.persistent_mapping;
+    result.info.preferred = result.access_preferred | result.placement_preferred |
+                            (result.prefer_coherent ? VK_MEMORY_PROPERTY_HOST_COHERENT_BIT : 0);
+    result.info.avoided   = result.access_avoided | result.placement_avoided;
+    return Ok(result);
 }
 struct MemoryBlock {
     MemoryState*                          owner;
@@ -269,11 +390,12 @@ struct MemoryRegion {
     MemoryBlock*           block;
     alloc::RangeAllocation range;
     VkDeviceSize           requested;
+    MemorySelectionInfo    selection;
     rstd::size_t           refs { 1 };
     bool                   persistent {};
     MemoryRegion(MemoryState* owner, MemoryBlock* block, alloc::RangeAllocation range,
-                 VkDeviceSize requested)
-        : owner(owner), block(block), range(range), requested(requested) {
+                 VkDeviceSize requested, MemorySelectionInfo selection)
+        : owner(owner), block(block), range(range), requested(requested), selection(selection) {
         ++owner->refs;
     }
 };
@@ -373,7 +495,8 @@ public:
         return { block->memory,      region_->range.offset,
                  region_->requested, region_->range.size,
                  block->type,        region_->owner->memory.memoryTypes[block->type].propertyFlags,
-                 block->dedicated };
+                 block->dedicated,   region_->owner->memory.memoryTypes[block->type].heapIndex,
+                 region_->selection };
     }
     auto map(VkDeviceSize offset = 0, VkDeviceSize size = VK_WHOLE_SIZE) const
         -> Result<MemoryMapping, MemoryError>;
@@ -575,9 +698,9 @@ export class MemoryAllocator {
                         VkImage image, bool within_budget) const
         -> Result<MemoryPlacement, MemoryError>;
     auto allocate(const VkMemoryRequirements&          requirements,
-                  const VkMemoryDedicatedRequirements& dedicated, MemoryClass cls, VkBuffer buffer,
-                  VkImage image, MemoryRequest request) const
-        -> Result<MemoryAllocation, MemoryError>;
+                  const VkMemoryDedicatedRequirements& dedicated,
+                  const ResourceMemoryConstraints& resource, VkBuffer buffer, VkImage image,
+                  MemoryRequest request) const -> Result<MemoryAllocation, MemoryError>;
 
 public:
     MemoryAllocator()                                  = default;
@@ -761,13 +884,18 @@ auto MemoryAllocator::allocate_block(VkDeviceSize bytes, VkDeviceSize size, VkDe
 }
 
 auto MemoryAllocator::allocate(const VkMemoryRequirements&          req,
-                               const VkMemoryDedicatedRequirements& dedicated, MemoryClass cls,
-                               VkBuffer buffer, VkImage image, MemoryRequest request) const
+                               const VkMemoryDedicatedRequirements& dedicated,
+                               const ResourceMemoryConstraints& resource, VkBuffer buffer,
+                               VkImage image, MemoryRequest request) const
     -> Result<MemoryAllocation, MemoryError> {
     if (! alloc::ValidRangeLayout(req.size, req.alignment))
         return Err(MemoryError { MemoryErrorKind::InvalidRequest });
-    if (request.persistent_mapping) request.required |= VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
-    rstd::uint32_t candidates = req.memoryTypeBits;
+    auto parsed_preferences = ParseMemoryTypePreferences(request, resource);
+    if (parsed_preferences.is_err()) return Err(parsed_preferences.unwrap_err_unchecked());
+    const auto     preferences   = parsed_preferences.unwrap_unchecked();
+    const auto     cls           = resource.resource_class;
+    bool           type_fallback = false;
+    rstd::uint32_t candidates    = req.memoryTypeBits;
     MemoryError    last { MemoryErrorKind::NoMemoryType, VK_ERROR_FEATURE_NOT_PRESENT };
     rstd::uint32_t calls  = 0;
     const auto     policy = state_->info.block_policy;
@@ -785,11 +913,12 @@ auto MemoryAllocator::allocate(const VkMemoryRequirements&          req,
         rstd::uint32_t selected = VK_MAX_MEMORY_TYPES, best = ~rstd::uint32_t(0);
         for (rstd::uint32_t i = 0; i < state_->memory.memoryTypeCount; ++i) {
             auto flags = state_->memory.memoryTypes[i].propertyFlags;
-            if (! (candidates & (1U << i)) || (flags & request.required) != request.required ||
+            if (! (candidates & (1U << i)) ||
+                (flags & preferences.info.required) != preferences.info.required ||
                 (flags &
                  (VK_MEMORY_PROPERTY_PROTECTED_BIT | VK_MEMORY_PROPERTY_DEVICE_COHERENT_BIT_AMD)))
                 continue;
-            auto score = rstd::uint32_t(__builtin_popcount(request.preferred & ~flags));
+            auto score = preferences.score(flags);
             if (score < best) {
                 best     = score;
                 selected = i;
@@ -872,11 +1001,22 @@ auto MemoryAllocator::allocate(const VkMemoryRequirements&          req,
         if (placement.is_err()) {
             last = placement.unwrap_err_unchecked();
             if (! retryable(last)) return traced(last);
+            type_fallback = true;
             continue;
         }
-        auto [block, range] = placement.unwrap_unchecked();
-        auto* region =
-            NewMemoryObject<MemoryRegion>(state_->metadata, state_, block, range, req.size);
+        auto [block, range]                  = placement.unwrap_unchecked();
+        auto selection                       = preferences.info;
+        selection.type_fallback              = type_fallback;
+        selection.device_allocation_attempts = calls;
+        if (block->dedicated)
+            selection.dedicated_reason =
+                dedicated.requiresDedicatedAllocation  ? MemoryDedicatedReason::Required
+                : request.dedicated                    ? MemoryDedicatedReason::Requested
+                : dedicated.prefersDedicatedAllocation ? MemoryDedicatedReason::DriverPreferred
+                : prefer_dedicated                     ? MemoryDedicatedReason::LargeResource
+                                                       : MemoryDedicatedReason::SharedExhausted;
+        auto* region = NewMemoryObject<MemoryRegion>(
+            state_->metadata, state_, block, range, req.size, selection);
         if (! region) {
             block->ranges.deallocate(range.id);
             trim();
@@ -908,12 +1048,8 @@ auto MemoryAllocator::create_buffer(const VkBufferCreateInfo& info, MemoryReques
                                             nullptr,
                                             buffer };
     state_->info.dispatch.buffer_requirements(state_->info.device, &query, &requirements);
-    auto allocation = allocate(requirements.memoryRequirements,
-                               dedicated,
-                               constraints.resource_class,
-                               buffer,
-                               VK_NULL_HANDLE,
-                               request);
+    auto allocation = allocate(
+        requirements.memoryRequirements, dedicated, constraints, buffer, VK_NULL_HANDLE, request);
     if (allocation.is_err()) {
         state_->info.dispatch.destroy_buffer(state_->info.device, buffer, nullptr);
         return Err(allocation.unwrap_err_unchecked());
@@ -949,12 +1085,8 @@ auto MemoryAllocator::create_image(const VkImageCreateInfo& info, MemoryRequest 
                                            nullptr,
                                            image };
     state_->info.dispatch.image_requirements(state_->info.device, &query, &requirements);
-    auto allocation = allocate(requirements.memoryRequirements,
-                               dedicated,
-                               constraints.resource_class,
-                               VK_NULL_HANDLE,
-                               image,
-                               request);
+    auto allocation = allocate(
+        requirements.memoryRequirements, dedicated, constraints, VK_NULL_HANDLE, image, request);
     if (allocation.is_err()) {
         state_->info.dispatch.destroy_image(state_->info.device, image, nullptr);
         return Err(allocation.unwrap_err_unchecked());
