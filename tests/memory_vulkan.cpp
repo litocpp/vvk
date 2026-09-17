@@ -896,7 +896,7 @@ TEST(MemoryVulkan, AccessIntentImageReadback) {
 
 namespace
 {
-void CheckBufferAddressShader(unsigned api) {
+void CheckBufferAddressShader(unsigned api, bool pooled = false) {
     VulkanMemoryTest context;
     const bool       initialized = context.initialize(api, false, true);
     if (context.unavailable)
@@ -912,16 +912,46 @@ void CheckBufferAddressShader(unsigned api) {
             256, VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
         auto padding = allocator.create_buffer(create_info);
         ASSERT_TRUE(padding.is_ok());
-        for (unsigned dedicated = 0; dedicated < 2; ++dedicated) {
+        for (unsigned dedicated = 0; dedicated < (pooled ? 1u : 2u); ++dedicated) {
+            vvk::MemoryPool output_pool, read_pool;
+            if (pooled) {
+                vvk::MemoryPoolCreateInfo info {
+                    .memory_type      = padding.unwrap_unchecked().allocation().info().memory_type,
+                    .allocation_flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT,
+                    .block_policy     = { 65536, 65536, 0, false },
+                    .min_blocks       = 1,
+                    .max_blocks       = 1
+                };
+                auto made_pool = allocator.create_pool(info);
+                ASSERT_TRUE(made_pool.is_ok());
+                output_pool = made_pool.unwrap_unchecked();
+            }
             auto output_result =
-                allocator.create_buffer(create_info, { .dedicated = dedicated != 0 });
+                pooled ? output_pool.create_buffer(create_info, { .existing_blocks_only = true })
+                       : allocator.create_buffer(create_info, { .dedicated = dedicated != 0 });
             auto read_result =
                 allocator.create_buffer(BufferCreate(256, VK_BUFFER_USAGE_TRANSFER_DST_BIT),
                                         vvk::MemoryRequest::Readback());
             ASSERT_TRUE(output_result.is_ok());
             ASSERT_TRUE(read_result.is_ok());
-            auto output         = output_result.unwrap_unchecked(),
-                 readback       = read_result.unwrap_unchecked();
+            auto output   = output_result.unwrap_unchecked(),
+                 readback = read_result.unwrap_unchecked();
+            if (pooled) {
+                vvk::MemoryPoolCreateInfo info { .memory_type =
+                                                     readback.allocation().info().memory_type,
+                                                 .block_policy = { 65536, 65536, 0, false },
+                                                 .min_blocks   = 1,
+                                                 .max_blocks   = 1 };
+                auto                      made_pool = allocator.create_pool(info);
+                ASSERT_TRUE(made_pool.is_ok());
+                read_pool                    = made_pool.unwrap_unchecked();
+                auto request                 = vvk::MemoryRequest::Readback();
+                request.existing_blocks_only = true;
+                auto pooled_read             = read_pool.create_buffer(
+                    BufferCreate(256, VK_BUFFER_USAGE_TRANSFER_DST_BIT), request);
+                ASSERT_TRUE(pooled_read.is_ok());
+                readback = pooled_read.unwrap_unchecked();
+            }
             auto address_result = output.device_address();
             ASSERT_TRUE(address_result.is_ok());
             auto address = address_result.unwrap_unchecked();
@@ -1011,10 +1041,17 @@ void CheckBufferAddressShader(unsigned api) {
             submission.fence = context.submit(submission.command);
             ASSERT_NE(submission.fence, VK_NULL_HANDLE);
             output.reset();
+            if (pooled) {
+                output_pool.reset();
+                read_pool.reset();
+                padding.unwrap_unchecked().reset();
+                allocator.reset();
+                readback.reset();
+            }
             EXPECT_EQ(submission.output.device_address().unwrap_unchecked(), address);
             submission.completed = context.wait(submission.fence);
             ASSERT_TRUE(submission.completed);
-            auto memory = readback.allocation();
+            auto memory = submission.readback.allocation();
             auto mapped = memory.map();
             ASSERT_TRUE(mapped.is_ok());
             auto mapping = mapped.unwrap_unchecked();
@@ -1031,4 +1068,94 @@ TEST(MemoryVulkan, BufferAddressCoreShaderReadback) {
 }
 TEST(MemoryVulkan, BufferAddressExtensionShaderReadback) {
     CheckBufferAddressShader(VK_API_VERSION_1_1);
+}
+
+TEST(MemoryVulkan, PoolBufferAddressSubmissionLifetime) {
+    CheckBufferAddressShader(VK_API_VERSION_1_2, true);
+}
+TEST(MemoryVulkan, PoolTransferAndSubmissionLifetime) {
+    VulkanMemoryTest context;
+    const bool       initialized = context.initialize();
+    if (context.unavailable) GTEST_SKIP() << "Vulkan 1.1 graphics device unavailable";
+    ASSERT_TRUE(initialized);
+    {
+        auto made = vvk::MemoryAllocator::Create(
+            context.gpu, context.instance_dispatch, context.device_dispatch);
+        ASSERT_TRUE(made.is_ok());
+        auto       allocator = made.unwrap_unchecked();
+        const auto usage     = VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        auto       probe_result =
+            allocator.create_buffer(BufferCreate(256, usage), vvk::MemoryRequest::Readback());
+        ASSERT_TRUE(probe_result.is_ok());
+        auto                      probe = probe_result.unwrap_unchecked();
+        vvk::MemoryPoolCreateInfo info { .memory_type  = probe.allocation().info().memory_type,
+                                         .block_policy = { 65536, 65536, 0, false },
+                                         .min_blocks   = 1,
+                                         .max_blocks   = 1 };
+        auto                      pool_result = allocator.create_pool(info);
+        ASSERT_TRUE(pool_result.is_ok());
+        auto pool                    = pool_result.unwrap_unchecked();
+        auto request                 = vvk::MemoryRequest::Readback();
+        request.existing_blocks_only = true;
+        auto src_result              = pool.create_buffer(BufferCreate(256, usage), request);
+        auto dst_result              = pool.create_buffer(BufferCreate(256, usage), request);
+        ASSERT_TRUE(src_result.is_ok());
+        ASSERT_TRUE(dst_result.is_ok());
+        auto source = src_result.unwrap_unchecked(), destination = dst_result.unwrap_unchecked();
+        {
+            auto memory = source.allocation();
+            auto mapped = memory.map();
+            ASSERT_TRUE(mapped.is_ok());
+            auto mapping = mapped.unwrap_unchecked();
+            for (unsigned i = 0; i < 256; ++i)
+                static_cast<unsigned char*>(mapping.data())[i] =
+                    static_cast<unsigned char>(i ^ 0x5a);
+            ASSERT_TRUE(memory.flush().is_ok());
+        }
+        struct Submission {
+            VulkanMemoryTest&    context;
+            vvk::AllocatedBuffer source, destination;
+            VkCommandBuffer      command {};
+            VkFence              fence {};
+            bool                 completed {};
+            ~Submission() {
+                if (fence) {
+                    if (! completed && ! context.wait(fence))
+                        context.device_dispatch.vkDeviceWaitIdle(context.device);
+                    context.device_dispatch.vkDestroyFence(context.device, fence, nullptr);
+                }
+                if (command)
+                    context.device_dispatch.vkFreeCommandBuffers(
+                        context.device, context.pool, 1, &command);
+            }
+        } submission { context, source.clone(), destination.clone() };
+        submission.command = context.begin();
+        ASSERT_NE(submission.command, VK_NULL_HANDLE);
+        VkBufferCopy copy { 0, 0, 256 };
+        context.device_dispatch.vkCmdCopyBuffer(
+            submission.command, source.handle(), destination.handle(), 1, &copy);
+        TransferBarrier(context.device_dispatch,
+                        submission.command,
+                        destination.handle(),
+                        VK_ACCESS_HOST_READ_BIT,
+                        VK_PIPELINE_STAGE_HOST_BIT);
+        submission.fence = context.submit(submission.command);
+        ASSERT_NE(submission.fence, VK_NULL_HANDLE);
+        source.reset();
+        destination.reset();
+        probe.reset();
+        pool.reset();
+        allocator.reset();
+        submission.completed = context.wait(submission.fence);
+        ASSERT_TRUE(submission.completed);
+        auto memory = submission.destination.allocation();
+        auto mapped = memory.map();
+        ASSERT_TRUE(mapped.is_ok());
+        auto mapping = mapped.unwrap_unchecked();
+        ASSERT_TRUE(memory.invalidate().is_ok());
+        for (unsigned i = 0; i < 256; ++i)
+            EXPECT_EQ(static_cast<const unsigned char*>(mapping.data())[i],
+                      static_cast<unsigned char>(i ^ 0x5a));
+    }
+    EXPECT_EQ(context.errors, 0u);
 }

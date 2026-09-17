@@ -68,7 +68,11 @@ enum class MemoryErrorKind
     NoMemoryType,
     HostMemory,
     DeviceMemory,
-    Vulkan
+    Vulkan,
+    PoolCapacity,
+    ExistingBlocksOnly,
+    PoolIncompatible,
+    DedicatedConflict
 };
 struct MemoryError {
     MemoryErrorKind kind;
@@ -88,6 +92,26 @@ struct MemoryBlockPolicy {
     rstd::uint32_t shrink_attempts { 3 };
     // Try the other allocation kind in the same type only after device-memory exhaustion.
     bool dedicated_fallback { true };
+};
+enum class MemoryClass
+{
+    Linear,
+    Optimal
+};
+struct MemoryPoolCreateInfo {
+    rstd::uint32_t        memory_type { VK_MAX_MEMORY_TYPES };
+    MemoryClass           resource_class { MemoryClass::Linear };
+    VkMemoryAllocateFlags allocation_flags {};
+    // Dedicated fallback does not apply to explicit pools.
+    MemoryBlockPolicy block_policy {};
+    // Zero maxima impose no explicit limit; min blocks use initial_size.
+    rstd::uint32_t min_blocks {}, max_blocks {};
+    VkDeviceSize   max_bytes {};
+    bool           within_budget {};
+};
+struct MemoryPoolStatistics {
+    rstd::size_t block_count {}, allocation_count {};
+    VkDeviceSize block_bytes {}, requested_bytes {}, occupied_bytes {};
 };
 struct MemoryAllocatorCreateInfo {
     VkPhysicalDevice physical_device {};
@@ -130,7 +154,8 @@ enum class MemoryPlacementReason
     AutomaticHost,
     RequestedDevice,
     RequestedHost,
-    ExplicitFlags
+    ExplicitFlags,
+    FixedPool
 };
 enum class MemoryDedicatedReason
 {
@@ -157,7 +182,9 @@ struct MemoryRequest {
     bool                  within_budget {};
     MemoryHostAccess      host_access { MemoryHostAccess::None };
     MemoryPreference      preference { MemoryPreference::Automatic };
-    static MemoryRequest  Upload() {
+    // Forbids new VkDeviceMemory; CPU metadata allocation can still occur.
+    bool                 existing_blocks_only {};
+    static MemoryRequest Upload() {
         MemoryRequest result;
         result.host_access = MemoryHostAccess::SequentialWrite;
         return result;
@@ -194,6 +221,7 @@ struct MemoryBudgetSnapshot {
 };
 
 class MemoryAllocator;
+class MemoryPool;
 class MemoryAllocation;
 class MemoryMapping;
 class AllocatedBuffer;
@@ -204,6 +232,7 @@ namespace vvk
 {
 struct MemoryState;
 struct MemoryBlock;
+struct MemoryBlockSet;
 struct MemoryRegion;
 struct MemoryResource;
 
@@ -230,11 +259,6 @@ void DeleteMemoryObject(MemoryMetadata metadata, T* object) {
     metadata->deallocate(object, rstd::alloc::Layout::make<T>());
 }
 
-enum class MemoryClass
-{
-    Linear,
-    Optimal
-};
 struct ResourceMemoryConstraints {
     MemoryClass           resource_class;
     bool                  device_access;
@@ -365,6 +389,7 @@ auto ParseMemoryTypePreferences(MemoryRequest request, const ResourceMemoryConst
 }
 struct MemoryBlock {
     MemoryState*                          owner;
+    MemoryBlockSet*                       collection {};
     VkDeviceMemory                        memory {};
     VkDeviceSize                          size;
     rstd::uint32_t                        type;
@@ -384,17 +409,30 @@ struct MemoryBlock {
           allocation_flags(flags),
           ranges(size, metadata) {}
 };
+struct MemoryBlockSet {
+    MemoryState*                                  owner;
+    MemoryPoolCreateInfo                          info {};
+    bool                                          explicit_pool {};
+    rstd::size_t                                  refs { 1 };
+    alloc::vec::Vec<MemoryBlock*, MemoryMetadata> blocks;
+    MemoryPoolStatistics                          stats {};
+    MemoryBlockSet(MemoryState* owner, MemoryMetadata metadata)
+        : owner(owner), blocks(alloc::vec::Vec<MemoryBlock*, MemoryMetadata>::new_in(metadata)) {}
+};
 struct MemoryState {
-    MemoryAllocatorCreateInfo                     info;
-    MemoryMetadata                                metadata;
-    VkPhysicalDeviceProperties                    properties {};
-    VkPhysicalDeviceMemoryProperties              memory {};
+    MemoryAllocatorCreateInfo        info;
+    MemoryMetadata                   metadata;
+    MemoryBlockSet                   defaults;
+    VkPhysicalDeviceProperties       properties {};
+    VkPhysicalDeviceMemoryProperties memory {};
+    // Non-owning registry across all block sets for device limits and heap accounting.
     alloc::vec::Vec<MemoryBlock*, MemoryMetadata> blocks;
     VkDeviceSize                                  max_allocation_size { ~VkDeviceSize(0) };
     rstd::size_t                                  refs { 1 };
     explicit MemoryState(MemoryAllocatorCreateInfo info, MemoryMetadata metadata)
         : info(info),
           metadata(metadata),
+          defaults(this, metadata),
           blocks(alloc::vec::Vec<MemoryBlock*, MemoryMetadata>::new_in(metadata)) {}
 };
 struct MemoryRegion {
@@ -405,22 +443,65 @@ struct MemoryRegion {
     MemorySelectionInfo    selection;
     rstd::size_t           refs { 1 };
     bool                   persistent {};
+    bool                   rollback_block {};
     MemoryRegion(MemoryState* owner, MemoryBlock* block, alloc::RangeAllocation range,
                  VkDeviceSize requested, MemorySelectionInfo selection)
         : owner(owner), block(block), range(range), requested(requested), selection(selection) {
-        ++owner->refs;
+        if (block->collection->explicit_pool)
+            ++block->collection->refs;
+        else
+            ++owner->refs;
+        auto& stats = block->collection->stats;
+        ++stats.allocation_count;
+        stats.requested_bytes += requested;
+        stats.occupied_bytes += range.size;
     }
 };
 void DestroyMemoryBlock(MemoryState* owner, MemoryBlock* block) {
+    auto* set = block->collection;
+    for (usize i {}; i < set->blocks.len(); ++i)
+        if (set->blocks[i] == block) {
+            set->blocks.remove(i);
+            break;
+        }
+    for (usize i {}; i < owner->blocks.len(); ++i)
+        if (owner->blocks[i] == block) {
+            owner->blocks.remove(i);
+            break;
+        }
+    --set->stats.block_count;
+    set->stats.block_bytes -= block->size;
     if (block->mapped) owner->info.dispatch.unmap(owner->info.device, block->memory);
     owner->info.dispatch.free(owner->info.device, block->memory, nullptr);
     DeleteMemoryObject(owner->metadata, block);
 }
 void DropMemoryState(MemoryState* owner) {
     if (--owner->refs != 0) return;
-    for (auto* block : owner->blocks) DestroyMemoryBlock(owner, block);
+    while (! owner->defaults.blocks.is_empty())
+        DestroyMemoryBlock(owner, owner->defaults.blocks[usize(0)]);
     const auto metadata = owner->metadata;
     DeleteMemoryObject(metadata, owner);
+}
+void DropMemoryBlockSet(MemoryBlockSet* set) {
+    auto* owner = set->owner;
+    if (! set->explicit_pool) {
+        DropMemoryState(owner);
+        return;
+    }
+    if (--set->refs != 0) return;
+    while (! set->blocks.is_empty()) DestroyMemoryBlock(owner, set->blocks[usize(0)]);
+    DeleteMemoryObject(owner->metadata, set);
+    DropMemoryState(owner);
+}
+void TrimMemoryBlockSet(MemoryBlockSet* set) {
+    for (usize i {}; i < set->blocks.len();) {
+        auto* block = set->blocks[i];
+        if (block->ranges.counters().allocation_count == 0 &&
+            (! set->explicit_pool || set->blocks.len().to_primitive() > set->info.min_blocks))
+            DestroyMemoryBlock(set->owner, block);
+        else
+            ++i;
+    }
 }
 void UnmapMemoryBlock(MemoryBlock* block) {
     if (--block->maps == 0) {
@@ -445,9 +526,14 @@ void DropMemoryRegion(MemoryRegion* region) {
     auto* block = region->block;
     if (region->persistent) UnmapMemoryBlock(block);
     block->ranges.deallocate(region->range.id);
-    bool release_block = block->dedicated;
-    if (! release_block && block->ranges.counters().allocation_count == 0) {
-        for (auto* other : owner->blocks) {
+    auto* set = block->collection;
+    --set->stats.allocation_count;
+    set->stats.requested_bytes -= region->requested;
+    set->stats.occupied_bytes -= region->range.size;
+    bool release_block = block->dedicated || region->rollback_block;
+    if (! release_block && block->ranges.counters().allocation_count == 0 &&
+        (! set->explicit_pool || set->blocks.len().to_primitive() > set->info.min_blocks)) {
+        for (auto* other : set->blocks) {
             if (other != block && ! other->dedicated && other->type == block->type &&
                 other->resource_class == block->resource_class &&
                 other->allocation_flags == block->allocation_flags &&
@@ -457,16 +543,9 @@ void DropMemoryRegion(MemoryRegion* region) {
             }
         }
     }
-    if (release_block) {
-        for (usize i {}; i < owner->blocks.len(); ++i)
-            if (owner->blocks[i] == block) {
-                owner->blocks.remove(i);
-                break;
-            }
-        DestroyMemoryBlock(owner, block);
-    }
+    if (release_block) DestroyMemoryBlock(owner, block);
     DeleteMemoryObject(owner->metadata, region);
-    DropMemoryState(owner);
+    DropMemoryBlockSet(set);
 }
 
 /// A memory lease preserves storage, not its bound buffer or image. Retain the
@@ -716,10 +795,17 @@ public:
 struct MemoryPlacement {
     MemoryBlock*           block;
     alloc::RangeAllocation range;
+    bool                   new_block {};
 };
 export class MemoryAllocator {
-    MemoryState* state_ {};
-    explicit MemoryAllocator(MemoryState* state): state_(state) {}
+    MemoryState*    state_ {};
+    MemoryBlockSet* set_ {};
+    friend class MemoryPool;
+    explicit MemoryAllocator(MemoryState* state): state_(state), set_(&state->defaults) {}
+    explicit MemoryAllocator(MemoryBlockSet* set): state_(set->owner), set_(set) {}
+    auto create_block(VkDeviceSize bytes, rstd::uint32_t type, MemoryClass cls,
+                      VkMemoryAllocateFlags flags, bool separate, VkBuffer buffer, VkImage image,
+                      bool within_budget) const -> Result<MemoryBlock*, MemoryError>;
     auto allocate_block(VkDeviceSize bytes, VkDeviceSize size, VkDeviceSize alignment,
                         rstd::uint32_t type, MemoryClass cls, VkMemoryAllocateFlags flags,
                         bool separate, VkBuffer buffer, VkImage image, bool within_budget) const
@@ -734,19 +820,22 @@ public:
     MemoryAllocator(const MemoryAllocator&)            = delete;
     MemoryAllocator& operator=(const MemoryAllocator&) = delete;
     MemoryAllocator(MemoryAllocator&& other) noexcept
-        : state_(rstd::exchange(other.state_, nullptr)) {}
+        : state_(rstd::exchange(other.state_, nullptr)),
+          set_(rstd::exchange(other.set_, nullptr)) {}
     MemoryAllocator& operator=(MemoryAllocator&& other) noexcept {
         if (this != &other) {
             reset();
             state_ = rstd::exchange(other.state_, nullptr);
+            set_   = rstd::exchange(other.set_, nullptr);
         }
         return *this;
     }
     ~MemoryAllocator() { reset(); }
     void reset() {
         if (state_) {
-            DropMemoryState(state_);
+            DropMemoryBlockSet(set_);
             state_ = nullptr;
+            set_   = nullptr;
         }
     }
     static auto Create(VkPhysicalDevice physical, const InstanceDispatch& instance,
@@ -808,19 +897,90 @@ public:
         -> Result<AllocatedBuffer, MemoryError>;
     auto create_image(const VkImageCreateInfo& info, MemoryRequest request = {}) const
         -> Result<AllocatedImage, MemoryError>;
+    auto create_pool(MemoryPoolCreateInfo info) const -> Result<MemoryPool, MemoryError>;
     auto budget() const -> MemoryBudgetSnapshot;
     void trim() const {
         if (! state_) return;
         for (usize i {}; i < state_->blocks.len();) {
             auto* block = state_->blocks[i];
-            if (block->ranges.counters().allocation_count == 0) {
-                state_->blocks.remove(i);
+            auto* set   = block->collection;
+            if (block->ranges.counters().allocation_count == 0 &&
+                (! set->explicit_pool || set->blocks.len().to_primitive() > set->info.min_blocks))
                 DestroyMemoryBlock(state_, block);
-            } else
+            else
                 ++i;
         }
     }
 };
+
+export class MemoryPool {
+    MemoryAllocator allocator_;
+    friend class MemoryAllocator;
+    explicit MemoryPool(MemoryBlockSet* set): allocator_(set) {}
+
+public:
+    MemoryPool()                                 = default;
+    MemoryPool(const MemoryPool&)                = delete;
+    MemoryPool& operator=(const MemoryPool&)     = delete;
+    MemoryPool(MemoryPool&&) noexcept            = default;
+    MemoryPool& operator=(MemoryPool&&) noexcept = default;
+    void        reset() { allocator_.reset(); }
+    auto        create_buffer(const VkBufferCreateInfo& info, MemoryRequest request = {}) const
+        -> Result<AllocatedBuffer, MemoryError> {
+        return allocator_.create_buffer(info, request);
+    }
+    auto create_image(const VkImageCreateInfo& info, MemoryRequest request = {}) const
+        -> Result<AllocatedImage, MemoryError> {
+        return allocator_.create_image(info, request);
+    }
+    auto statistics() const -> MemoryPoolStatistics {
+        return allocator_.set_ ? allocator_.set_->stats : MemoryPoolStatistics {};
+    }
+    void trim() const {
+        if (allocator_.set_) TrimMemoryBlockSet(allocator_.set_);
+    }
+};
+auto MemoryAllocator::create_pool(MemoryPoolCreateInfo info) const
+    -> Result<MemoryPool, MemoryError> {
+    const auto policy = info.block_policy;
+    if (! state_ || info.memory_type >= state_->memory.memoryTypeCount ||
+        (info.resource_class != MemoryClass::Linear &&
+         info.resource_class != MemoryClass::Optimal) ||
+        ! policy.initial_size || ! policy.maximum_size ||
+        policy.initial_size > policy.maximum_size || policy.shrink_attempts > 63 ||
+        (info.max_blocks && info.min_blocks > info.max_blocks) ||
+        (info.min_blocks && policy.initial_size > ~VkDeviceSize(0) / info.min_blocks) ||
+        (info.max_bytes && policy.initial_size * info.min_blocks > info.max_bytes))
+        return Err(MemoryError { MemoryErrorKind::InvalidRequest });
+    if ((info.allocation_flags & ~VkMemoryAllocateFlags(VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT)) ||
+        (info.allocation_flags && ! state_->info.buffer_device_address_enabled) ||
+        (state_->memory.memoryTypes[info.memory_type].propertyFlags &
+         (VK_MEMORY_PROPERTY_PROTECTED_BIT | VK_MEMORY_PROPERTY_DEVICE_COHERENT_BIT_AMD)))
+        return Err(MemoryError { MemoryErrorKind::Unsupported });
+    auto* set = NewMemoryObject<MemoryBlockSet>(state_->metadata, state_, state_->metadata);
+    if (! set) return Err(HostMemoryError());
+    set->explicit_pool                        = true;
+    set->info                                 = info;
+    set->info.block_policy.dedicated_fallback = false;
+    ++state_->refs;
+    MemoryPool result(set);
+    for (rstd::uint32_t i = 0; i < info.min_blocks; ++i) {
+        auto block = result.allocator_.create_block(policy.initial_size,
+                                                    info.memory_type,
+                                                    info.resource_class,
+                                                    info.allocation_flags,
+                                                    false,
+                                                    VK_NULL_HANDLE,
+                                                    VK_NULL_HANDLE,
+                                                    info.within_budget);
+        if (block.is_err()) {
+            auto error = block.unwrap_err_unchecked();
+            error.device_allocation_attempts += i;
+            return Err(error);
+        }
+    }
+    return Ok(rstd::move(result));
+}
 
 auto MemoryAllocator::budget() const -> MemoryBudgetSnapshot {
     MemoryBudgetSnapshot result;
@@ -860,13 +1020,12 @@ auto MemoryAllocator::budget() const -> MemoryBudgetSnapshot {
     return result;
 }
 
-auto MemoryAllocator::allocate_block(VkDeviceSize bytes, VkDeviceSize size, VkDeviceSize alignment,
-                                     rstd::uint32_t type, MemoryClass cls,
-                                     VkMemoryAllocateFlags flags, bool separate, VkBuffer buffer,
-                                     VkImage image, bool within_budget) const
-    -> Result<MemoryPlacement, MemoryError> {
+auto MemoryAllocator::create_block(VkDeviceSize bytes, rstd::uint32_t type, MemoryClass cls,
+                                   VkMemoryAllocateFlags flags, bool separate, VkBuffer buffer,
+                                   VkImage image, bool within_budget) const
+    -> Result<MemoryBlock*, MemoryError> {
     auto error = [&](VkResult       result,
-                     rstd::uint32_t calls = 0) -> Result<MemoryPlacement, MemoryError> {
+                     rstd::uint32_t calls = 0) -> Result<MemoryBlock*, MemoryError> {
         auto value = ApiMemoryError(result);
         if (result == VK_ERROR_TOO_MANY_OBJECTS) value.kind = MemoryErrorKind::DeviceMemory;
         value.device_allocation_attempts = calls;
@@ -875,9 +1034,10 @@ auto MemoryAllocator::allocate_block(VkDeviceSize bytes, VkDeviceSize size, VkDe
         value.dedicated                  = separate;
         return Err(value);
     };
+    if (set_->explicit_pool && bytes > ~VkDeviceSize(0) - set_->stats.block_bytes)
+        return Err(MemoryError { MemoryErrorKind::InvalidRequest });
     const auto heap_index = state_->memory.memoryTypes[type].heapIndex;
-    if (bytes < size || bytes > state_->memory.memoryHeaps[heap_index].size ||
-        bytes > state_->max_allocation_size)
+    if (bytes > state_->memory.memoryHeaps[heap_index].size || bytes > state_->max_allocation_size)
         return error(VK_ERROR_OUT_OF_DEVICE_MEMORY);
     if (state_->blocks.len().to_primitive() >= state_->properties.limits.maxMemoryAllocationCount)
         return error(VK_ERROR_TOO_MANY_OBJECTS);
@@ -886,18 +1046,17 @@ auto MemoryAllocator::allocate_block(VkDeviceSize bytes, VkDeviceSize size, VkDe
         if (heap.usage > heap.budget || bytes > heap.budget - heap.usage)
             return error(VK_ERROR_OUT_OF_DEVICE_MEMORY);
     }
+    if (set_->explicit_pool &&
+        ((set_->info.max_blocks && set_->stats.block_count >= set_->info.max_blocks) ||
+         (set_->info.max_bytes && (set_->stats.block_bytes > set_->info.max_bytes ||
+                                   bytes > set_->info.max_bytes - set_->stats.block_bytes))))
+        return Err(MemoryError { MemoryErrorKind::PoolCapacity });
+    if (set_->blocks.try_reserve(usize(1)).is_err()) return error(VK_ERROR_OUT_OF_HOST_MEMORY);
     if (state_->blocks.try_reserve(usize(1)).is_err()) return error(VK_ERROR_OUT_OF_HOST_MEMORY);
     auto* block = NewMemoryObject<MemoryBlock>(
         state_->metadata, state_, bytes, type, cls, separate, flags, state_->metadata);
     if (! block) return error(VK_ERROR_OUT_OF_HOST_MEMORY);
-    auto allocation = block->ranges.allocate(size, alignment);
-    if (allocation.is_err()) {
-        const auto reason = allocation.unwrap_err_unchecked();
-        DeleteMemoryObject(state_->metadata, block);
-        return error(reason == alloc::RangeError::MetadataAllocation
-                         ? VK_ERROR_OUT_OF_HOST_MEMORY
-                         : VK_ERROR_OUT_OF_DEVICE_MEMORY);
-    }
+    block->collection = set_;
     VkMemoryDedicatedAllocateInfo dedicated_info {
         VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO, nullptr, image, buffer
     };
@@ -917,7 +1076,30 @@ auto MemoryAllocator::allocate_block(VkDeviceSize bytes, VkDeviceSize size, VkDe
         return error(result, 1);
     }
     state_->blocks.push(rstd::move(block));
-    return Ok(MemoryPlacement { block, allocation.unwrap_unchecked() });
+    set_->blocks.push(rstd::move(block));
+    ++set_->stats.block_count;
+    set_->stats.block_bytes += bytes;
+    return Ok(block);
+}
+
+auto MemoryAllocator::allocate_block(VkDeviceSize bytes, VkDeviceSize size, VkDeviceSize alignment,
+                                     rstd::uint32_t type, MemoryClass cls,
+                                     VkMemoryAllocateFlags flags, bool separate, VkBuffer buffer,
+                                     VkImage image, bool within_budget) const
+    -> Result<MemoryPlacement, MemoryError> {
+    auto result = create_block(bytes, type, cls, flags, separate, buffer, image, within_budget);
+    if (result.is_err()) return Err(result.unwrap_err_unchecked());
+    auto* block = result.unwrap_unchecked();
+    auto  range = block->ranges.allocate(size, alignment);
+    if (range.is_err()) {
+        auto error = range.unwrap_err_unchecked() == alloc::RangeError::MetadataAllocation
+                         ? HostMemoryError()
+                         : ApiMemoryError(VK_ERROR_OUT_OF_DEVICE_MEMORY);
+        error.device_allocation_attempts = 1;
+        DestroyMemoryBlock(state_, block);
+        return Err(error);
+    }
+    return Ok(MemoryPlacement { block, range.unwrap_unchecked(), true });
 }
 
 auto MemoryAllocator::allocate(const VkMemoryRequirements&          req,
@@ -935,10 +1117,25 @@ auto MemoryAllocator::allocate(const VkMemoryRequirements&          req,
     rstd::uint32_t candidates    = req.memoryTypeBits;
     MemoryError    last { MemoryErrorKind::NoMemoryType, VK_ERROR_FEATURE_NOT_PRESENT };
     rstd::uint32_t calls  = 0;
-    const auto     policy = state_->info.block_policy;
-    const bool     forced = request.dedicated || dedicated.requiresDedicatedAllocation;
-    const bool     prefer_dedicated =
-        forced || dedicated.prefersDedicatedAllocation || req.size > policy.maximum_size / 2;
+    const bool     pool   = set_->explicit_pool;
+    const auto     policy = pool ? set_->info.block_policy : state_->info.block_policy;
+    if (pool) {
+        const auto& info = set_->info;
+        if (cls != info.resource_class || resource.allocation_flags != info.allocation_flags)
+            return Err(MemoryError { MemoryErrorKind::PoolIncompatible });
+        if (! (candidates & (1u << info.memory_type)) ||
+            (state_->memory.memoryTypes[info.memory_type].propertyFlags &
+             preferences.info.required) != preferences.info.required)
+            return Err(MemoryError { MemoryErrorKind::NoMemoryType });
+        candidates            = 1u << info.memory_type;
+        request.within_budget = request.within_budget || info.within_budget;
+    }
+    const bool forced = request.dedicated || dedicated.requiresDedicatedAllocation;
+    if (forced && (pool || request.existing_blocks_only))
+        return Err(MemoryError { MemoryErrorKind::DedicatedConflict });
+    const bool prefer_dedicated =
+        ! pool && ! request.existing_blocks_only &&
+        (forced || dedicated.prefersDedicatedAllocation || req.size > policy.maximum_size / 2);
     auto retryable = [](MemoryError error) {
         return error.api_result == VK_ERROR_OUT_OF_DEVICE_MEMORY;
     };
@@ -980,7 +1177,7 @@ auto MemoryAllocator::allocate(const VkMemoryRequirements&          req,
             }
             VkDeviceSize largest = 0;
             if (! separate) {
-                for (auto* block : state_->blocks) {
+                for (auto* block : set_->blocks) {
                     if (block->dedicated || block->type != selected ||
                         block->resource_class != cls ||
                         block->allocation_flags != resource.allocation_flags)
@@ -993,6 +1190,8 @@ auto MemoryAllocator::allocate(const VkMemoryRequirements&          req,
                         return Err(HostMemoryError());
                 }
             }
+            if (request.existing_blocks_only)
+                return Err(MemoryError { MemoryErrorKind::ExistingBlocksOnly });
             auto bytes = size;
             if (! separate) {
                 bytes = policy.initial_size;
@@ -1003,11 +1202,17 @@ auto MemoryAllocator::allocate(const VkMemoryRequirements&          req,
                 }
                 if (bytes < size) bytes = size;
                 if (bytes > policy.maximum_size) {
-                    auto error            = ApiMemoryError(VK_ERROR_OUT_OF_DEVICE_MEMORY);
+                    auto error            = pool ? MemoryError { MemoryErrorKind::PoolCapacity }
+                                                 : ApiMemoryError(VK_ERROR_OUT_OF_DEVICE_MEMORY);
                     error.memory_type     = selected;
                     error.allocation_size = bytes;
                     return Err(error);
                 }
+            }
+            if (pool && set_->info.max_bytes) {
+                const auto remaining = set_->info.max_bytes - set_->stats.block_bytes;
+                if (remaining < size) return Err(MemoryError { MemoryErrorKind::PoolCapacity });
+                if (bytes > remaining) bytes = remaining;
             }
             for (rstd::uint32_t shrink = 0;; ++shrink) {
                 auto result = allocate_block(bytes,
@@ -1036,16 +1241,19 @@ auto MemoryAllocator::allocate(const VkMemoryRequirements&          req,
         };
         auto placement = attempt(prefer_dedicated);
         if (placement.is_err() && retryable(placement.unwrap_err_unchecked()) && ! forced &&
-            policy.dedicated_fallback)
+            ! pool && ! request.existing_blocks_only && policy.dedicated_fallback)
             placement = attempt(! prefer_dedicated);
         if (placement.is_err()) {
             last = placement.unwrap_err_unchecked();
-            if (! retryable(last)) return traced(last);
+            if (! retryable(last) && ! (request.existing_blocks_only &&
+                                        last.kind == MemoryErrorKind::ExistingBlocksOnly))
+                return traced(last);
             type_fallback = true;
             continue;
         }
-        auto [block, range]                  = placement.unwrap_unchecked();
-        auto selection                       = preferences.info;
+        auto [block, range, new_block] = placement.unwrap_unchecked();
+        auto selection                 = preferences.info;
+        if (pool) selection.placement_reason = MemoryPlacementReason::FixedPool;
         selection.type_fallback              = type_fallback;
         selection.device_allocation_attempts = calls;
         if (block->dedicated)
@@ -1059,9 +1267,10 @@ auto MemoryAllocator::allocate(const VkMemoryRequirements&          req,
             state_->metadata, state_, block, range, req.size, selection);
         if (! region) {
             block->ranges.deallocate(range.id);
-            trim();
+            if (new_block) DestroyMemoryBlock(state_, block);
             return traced(HostMemoryError());
         }
+        region->rollback_block = new_block;
         MemoryAllocation result(region);
         if (request.persistent_mapping) {
             auto mapped = MapMemoryBlock(block);
@@ -1102,14 +1311,19 @@ auto MemoryAllocator::create_buffer(const VkBufferCreateInfo& info, MemoryReques
         state_->info.device, buffer, memory_info.memory, memory_info.offset);
     if (result != VK_SUCCESS) {
         state_->info.dispatch.destroy_buffer(state_->info.device, buffer, nullptr);
-        return Err(ApiMemoryError(result));
+        auto error                       = ApiMemoryError(result);
+        error.device_allocation_attempts = memory_info.selection.device_allocation_attempts;
+        return Err(error);
     }
     auto* resource = NewMemoryObject<MemoryResource>(
         state_->metadata, rstd::move(memory), buffer, VK_NULL_HANDLE, state_);
     if (! resource) {
         state_->info.dispatch.destroy_buffer(state_->info.device, buffer, nullptr);
-        return Err(HostMemoryError());
+        auto error                       = HostMemoryError();
+        error.device_allocation_attempts = memory_info.selection.device_allocation_attempts;
+        return Err(error);
     }
+    resource->allocation.region_->rollback_block = false;
     return Ok(AllocatedBuffer(resource));
 }
 auto MemoryAllocator::create_image(const VkImageCreateInfo& info, MemoryRequest request) const
@@ -1139,14 +1353,19 @@ auto MemoryAllocator::create_image(const VkImageCreateInfo& info, MemoryRequest 
         state_->info.device, image, memory_info.memory, memory_info.offset);
     if (result != VK_SUCCESS) {
         state_->info.dispatch.destroy_image(state_->info.device, image, nullptr);
-        return Err(ApiMemoryError(result));
+        auto error                       = ApiMemoryError(result);
+        error.device_allocation_attempts = memory_info.selection.device_allocation_attempts;
+        return Err(error);
     }
     auto* resource = NewMemoryObject<MemoryResource>(
         state_->metadata, rstd::move(memory), VK_NULL_HANDLE, image, state_);
     if (! resource) {
         state_->info.dispatch.destroy_image(state_->info.device, image, nullptr);
-        return Err(HostMemoryError());
+        auto error                       = HostMemoryError();
+        error.device_allocation_attempts = memory_info.selection.device_allocation_attempts;
+        return Err(error);
     }
+    resource->allocation.region_->rollback_block = false;
     return Ok(AllocatedImage(resource));
 }
 } // namespace vvk

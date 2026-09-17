@@ -48,6 +48,7 @@ struct FakeMemory {
     unsigned                         address_queries {};
     bool                             zero_address {};
     unsigned                         attempt_count {};
+    unsigned                         fail_at_attempt {};
     VkMappedMemoryRange              last_range {};
     VkImageCreateFlags               image_flags {};
     const void*                      image_chain {};
@@ -108,6 +109,8 @@ VKAPI_ATTR VkResult VKAPI_CALL Allocate(VkDevice, const VkMemoryAllocateInfo*   
     fake->attempts[fake->attempt_count++] = { info->allocationSize,
                                               info->memoryTypeIndex,
                                               separate };
+    if (fake->fail_at_attempt && fake->attempt_count == fake->fail_at_attempt)
+        return VK_ERROR_OUT_OF_DEVICE_MEMORY;
     if (fake->reject_types & (1u << info->memoryTypeIndex)) return VK_ERROR_OUT_OF_DEVICE_MEMORY;
     if (fake->allocation_error != VK_SUCCESS) return fake->allocation_error;
     if ((separate && fake->reject_dedicated) || (! separate && fake->reject_shared) ||
@@ -1430,4 +1433,399 @@ TEST(Memory, AddressAllocationRollbackAndDedicatedChain) {
         EXPECT_EQ(metadata.live, 0);
     }
     EXPECT_TRUE(succeeded);
+}
+
+namespace
+{
+auto PoolInfo(unsigned type = 0) -> vvk::MemoryPoolCreateInfo {
+    return { .memory_type = type, .block_policy = { 256, 1024, 0, true } };
+}
+} // namespace
+TEST(MemoryPool, IsolationCompatibilityAndCounters) {
+    FakeMemory context;
+    fake = &context;
+    auto allocator =
+        MakeAllocator(alloc::allocator_ref(alloc::GLOBAL), false, { 1024, 1024, 0, false }, true)
+            .unwrap_unchecked();
+    auto info       = PoolInfo();
+    info.min_blocks = 1;
+    auto first      = allocator.create_pool(info).unwrap_unchecked();
+    auto second     = allocator.create_pool(info).unwrap_unchecked();
+    EXPECT_EQ(first.statistics().allocation_count, 0u);
+    EXPECT_EQ(first.statistics().block_bytes, 256u);
+    auto a = first.create_buffer(BufferInfo()).unwrap_unchecked();
+    auto b = second.create_buffer(BufferInfo()).unwrap_unchecked();
+    auto c = allocator.create_buffer(BufferInfo(), vvk::MemoryRequest::Upload()).unwrap_unchecked();
+    EXPECT_NE(a.allocation().info().memory, b.allocation().info().memory);
+    EXPECT_NE(a.allocation().info().memory, c.allocation().info().memory);
+    EXPECT_EQ(a.allocation().info().selection.placement_reason,
+              vvk::MemoryPlacementReason::FixedPool);
+    EXPECT_FALSE(a.allocation().info().selection.type_fallback);
+    EXPECT_EQ(first.statistics().requested_bytes, 73u);
+    EXPECT_EQ(first.statistics().occupied_bytes, 128u);
+    EXPECT_EQ(allocator.budget().heaps[0].block_count, 3u);
+    EXPECT_EQ(allocator.budget().heaps[0].allocation_count, 3u);
+    EXPECT_EQ(first.create_image(ImageInfo()).unwrap_err_unchecked().kind,
+              vvk::MemoryErrorKind::PoolIncompatible);
+    auto address = BufferInfo();
+    address.usage |= VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+    EXPECT_EQ(first.create_buffer(address).unwrap_err_unchecked().kind,
+              vvk::MemoryErrorKind::PoolIncompatible);
+    info.allocation_flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
+    auto address_pool     = allocator.create_pool(info).unwrap_unchecked();
+    EXPECT_EQ(address_pool.create_buffer(BufferInfo()).unwrap_err_unchecked().kind,
+              vvk::MemoryErrorKind::PoolIncompatible);
+    auto addressed = address_pool.create_buffer(address).unwrap_unchecked();
+    EXPECT_TRUE(addressed.device_address().is_ok());
+    auto incompatible =
+        first.create_buffer(BufferInfo(), { .required = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT });
+    EXPECT_EQ(incompatible.unwrap_err_unchecked().kind, vvk::MemoryErrorKind::NoMemoryType);
+    fake->requirement_types = 2;
+    EXPECT_EQ(first.create_buffer(BufferInfo()).unwrap_err_unchecked().kind,
+              vvk::MemoryErrorKind::NoMemoryType);
+    fake->requirement_types = 3;
+    auto soft =
+        first.create_buffer(BufferInfo(), { .preferred = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT });
+    EXPECT_TRUE(soft.is_ok());
+    EXPECT_EQ(first.statistics().allocation_count, 2u);
+    EXPECT_EQ(fake->queries, fake->creates);
+}
+TEST(MemoryPool, ExistingOnlyAndDedicatedConflicts) {
+    FakeMemory context;
+    fake            = &context;
+    auto allocator  = MakeAllocator().unwrap_unchecked();
+    auto info       = PoolInfo(1);
+    info.min_blocks = 1;
+    info.max_blocks = 1;
+    auto pool       = allocator.create_pool(info).unwrap_unchecked();
+    auto before     = fake->attempt_count;
+    auto a          = pool.create_buffer(BufferInfo(256), { .existing_blocks_only = true });
+    ASSERT_TRUE(a.is_ok());
+    EXPECT_EQ(pool.create_buffer(BufferInfo(), { .existing_blocks_only = true })
+                  .unwrap_err_unchecked()
+                  .kind,
+              vvk::MemoryErrorKind::ExistingBlocksOnly);
+    EXPECT_EQ(pool.create_buffer(BufferInfo(), { .dedicated = true }).unwrap_err_unchecked().kind,
+              vvk::MemoryErrorKind::DedicatedConflict);
+    fake->dedicated = true;
+    EXPECT_EQ(pool.create_buffer(BufferInfo()).unwrap_err_unchecked().kind,
+              vvk::MemoryErrorKind::DedicatedConflict);
+    EXPECT_EQ(allocator.create_buffer(BufferInfo(), { .existing_blocks_only = true })
+                  .unwrap_err_unchecked()
+                  .kind,
+              vvk::MemoryErrorKind::DedicatedConflict);
+    fake->dedicated = false;
+    EXPECT_EQ(fake->attempt_count, before);
+    a.unwrap_unchecked().reset();
+    fake->prefer_dedicated = true;
+    auto shared            = pool.create_buffer(BufferInfo(200));
+    ASSERT_TRUE(shared.is_ok());
+    EXPECT_FALSE(shared.unwrap_unchecked().allocation().info().dedicated);
+    EXPECT_EQ(fake->attempt_count, before);
+    auto default_buffer =
+        allocator.create_buffer(BufferInfo(), vvk::MemoryRequest::Upload()).unwrap_unchecked();
+    default_buffer.reset();
+    // Existing-only visits less-preferred types, without taking the dedicated preference.
+    fake->prefer_dedicated = false;
+    auto host =
+        allocator.create_buffer(BufferInfo(), vvk::MemoryRequest::Upload()).unwrap_unchecked();
+    auto count = fake->attempt_count;
+    auto reuse = allocator.create_buffer(BufferInfo(), { .existing_blocks_only = true });
+    ASSERT_TRUE(reuse.is_ok());
+    EXPECT_EQ(reuse.unwrap_unchecked().allocation().info().memory_type, 0u);
+    EXPECT_EQ(fake->attempt_count, count);
+}
+TEST(MemoryPool, LimitsGrowthAndTrim) {
+    FakeMemory context;
+    fake            = &context;
+    auto allocator  = MakeAllocator().unwrap_unchecked();
+    auto info       = PoolInfo(1);
+    info.min_blocks = 1;
+    info.max_blocks = 2;
+    info.max_bytes  = 640;
+    auto pool       = allocator.create_pool(info).unwrap_unchecked();
+    auto a          = pool.create_buffer(BufferInfo(256)).unwrap_unchecked();
+    auto b          = pool.create_buffer(BufferInfo(384)).unwrap_unchecked();
+    EXPECT_EQ(pool.statistics().block_bytes, 640u);
+    EXPECT_EQ(fake->attempts[1].size, 384u);
+    auto attempts = fake->attempt_count;
+    EXPECT_EQ(pool.create_buffer(BufferInfo()).unwrap_err_unchecked().kind,
+              vvk::MemoryErrorKind::PoolCapacity);
+    EXPECT_EQ(fake->attempt_count, attempts);
+    allocator.trim();
+    EXPECT_EQ(pool.statistics().block_count, 2u);
+    a.reset();
+    pool.trim();
+    EXPECT_EQ(pool.statistics().block_count, 1u);
+    EXPECT_EQ(pool.statistics().block_bytes, 384u);
+    b.reset();
+    allocator.trim();
+    EXPECT_EQ(pool.statistics().block_count, 1u);
+    EXPECT_EQ(pool.statistics().allocation_count, 0u);
+    EXPECT_EQ(pool.statistics().occupied_bytes, 0u);
+    EXPECT_EQ(pool.statistics().requested_bytes, 0u);
+    EXPECT_EQ(pool.create_buffer(BufferInfo(1025)).unwrap_err_unchecked().kind,
+              vvk::MemoryErrorKind::PoolCapacity);
+    auto empty_info = PoolInfo(1);
+    auto empty      = allocator.create_pool(empty_info).unwrap_unchecked();
+    auto c          = empty.create_buffer(BufferInfo()).unwrap_unchecked();
+    EXPECT_EQ(fake->attempts[fake->attempt_count - 1].size, 256u);
+    c.reset();
+    empty.trim();
+    EXPECT_EQ(empty.statistics().block_count, 0u);
+}
+TEST(MemoryPool, InvalidConfigurationAndPreallocationLimits) {
+    FakeMemory context;
+    fake           = &context;
+    auto allocator = MakeAllocator().unwrap_unchecked();
+    EXPECT_TRUE(allocator.create_pool({}).is_err());
+    for (unsigned mode = 0; mode < 8; ++mode) {
+        auto info = PoolInfo();
+        if (mode == 0) info.resource_class = static_cast<vvk::MemoryClass>(9);
+        if (mode == 1) info.block_policy.initial_size = 0;
+        if (mode == 2) {
+            info.min_blocks = 2;
+            info.max_blocks = 1;
+        }
+        if (mode == 3) {
+            info.min_blocks = 2;
+            info.max_bytes  = 511;
+        }
+        if (mode == 4) {
+            info.min_blocks   = 2;
+            info.block_policy = { ~VkDeviceSize(0), ~VkDeviceSize(0), 0, false };
+        }
+        if (mode == 5) info.allocation_flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
+        if (mode == 6) info.allocation_flags = VK_MEMORY_ALLOCATE_DEVICE_MASK_BIT;
+        if (mode == 7) info.block_policy.shrink_attempts = 64;
+        EXPECT_TRUE(allocator.create_pool(info).is_err());
+    }
+    EXPECT_EQ(fake->attempt_count, 0u);
+    fake->max_allocation_size = 128;
+    auto info                 = PoolInfo();
+    info.min_blocks           = 1;
+    auto limited_allocator    = MakeAllocator().unwrap_unchecked();
+    EXPECT_TRUE(limited_allocator.create_pool(info).is_err());
+    EXPECT_EQ(fake->attempt_count, 0u);
+}
+TEST(MemoryPool, PreallocationRollbackAndGlobalLimits) {
+    for (unsigned fail_at = 0; fail_at < 3; ++fail_at) {
+        FakeMemory context;
+        fake                  = &context;
+        fake->fail_at_attempt = fail_at + 1;
+        auto allocator        = MakeAllocator().unwrap_unchecked();
+        auto info             = PoolInfo();
+        info.min_blocks       = 3;
+        auto result           = allocator.create_pool(info);
+        ASSERT_TRUE(result.is_err());
+        EXPECT_EQ(result.unwrap_err_unchecked().device_allocation_attempts, fail_at + 1);
+        EXPECT_EQ(fake->allocations, fake->frees);
+        EXPECT_EQ(allocator.budget().heaps[0].block_count, 0u);
+    }
+    FakeMemory context;
+    fake                  = &context;
+    fake->max_allocations = 2;
+    auto allocator        = MakeAllocator().unwrap_unchecked();
+    auto info             = PoolInfo();
+    info.min_blocks       = 1;
+    auto first            = allocator.create_pool(info).unwrap_unchecked();
+    auto second           = allocator.create_pool(info).unwrap_unchecked();
+    EXPECT_TRUE(allocator.create_buffer(BufferInfo()).is_err());
+    EXPECT_TRUE(allocator.create_pool(info).is_err());
+    EXPECT_EQ(fake->attempt_count, 2u);
+    EXPECT_EQ(allocator.budget().heaps[0].block_count, 2u);
+}
+TEST(MemoryPool, BudgetAndExistingReuse) {
+    FakeMemory context;
+    fake                = &context;
+    auto allocator      = MakeAllocator().unwrap_unchecked();
+    fake->driver_budget = true;
+    fake->driver_usage  = 0;
+    fake->budget        = 128;
+    auto info           = PoolInfo();
+    info.min_blocks     = 1;
+    info.within_budget  = true;
+    EXPECT_TRUE(allocator.create_pool(info).is_err());
+    EXPECT_EQ(fake->attempt_count, 0u);
+    fake->budget       = 256;
+    auto pool          = allocator.create_pool(info).unwrap_unchecked();
+    fake->driver_usage = 512;
+    auto a             = pool.create_buffer(BufferInfo(256));
+    ASSERT_TRUE(a.is_ok());
+    EXPECT_TRUE(pool.create_buffer(BufferInfo()).is_err());
+    EXPECT_EQ(fake->attempt_count, 1u);
+    EXPECT_EQ(allocator.budget().heaps[0].block_bytes, 256u);
+}
+TEST(MemoryPool, LeasesKeepOwnerAndStorageAlive) {
+    FakeMemory context;
+    fake = &context;
+    MemoryFailMetadata metadata;
+    {
+        auto allocator  = MakeAllocator(alloc::allocator_ref(metadata)).unwrap_unchecked();
+        auto info       = PoolInfo();
+        info.min_blocks = 2;
+        auto pool       = allocator.create_pool(info).unwrap_unchecked();
+        auto buffer =
+            pool.create_buffer(BufferInfo(), { .persistent_mapping = true }).unwrap_unchecked();
+        auto memory  = buffer.allocation();
+        auto mapping = memory.map().unwrap_unchecked();
+        auto clone   = buffer.clone();
+        allocator.reset();
+        auto more = pool.create_buffer(BufferInfo()).unwrap_unchecked();
+        more.reset();
+        pool.reset();
+        buffer.reset();
+        EXPECT_EQ(fake->destroys, 1u);
+        EXPECT_EQ(fake->frees, 0u);
+        clone.reset();
+        EXPECT_EQ(fake->destroys, 2u);
+        memory.reset();
+        EXPECT_EQ(fake->frees, 0u);
+        static_cast<unsigned char*>(mapping.data())[0] = 42;
+    }
+    EXPECT_EQ(fake->allocations, fake->frees);
+    EXPECT_EQ(fake->maps, fake->unmaps);
+    EXPECT_EQ(metadata.live, 0);
+}
+TEST(MemoryPool, MetadataAndResourceFailureRollback) {
+    bool created = false, allocated = false;
+    for (int fail_at = 0; fail_at < 24; ++fail_at) {
+        FakeMemory context;
+        fake = &context;
+        MemoryFailMetadata metadata;
+        {
+            auto allocator     = MakeAllocator(alloc::allocator_ref(metadata)).unwrap_unchecked();
+            metadata.remaining = fail_at;
+            auto info          = PoolInfo();
+            info.min_blocks    = 2;
+            auto result        = allocator.create_pool(info);
+            if (result.is_ok()) {
+                created     = true;
+                auto pool   = result.unwrap_unchecked();
+                auto buffer = pool.create_buffer(BufferInfo());
+                if (buffer.is_ok()) allocated = true;
+            }
+            EXPECT_EQ(allocator.budget().heaps[0].block_count, 0u);
+        }
+        EXPECT_EQ(fake->allocations, fake->frees);
+        EXPECT_EQ(metadata.live, 0);
+    }
+    EXPECT_TRUE(created);
+    EXPECT_TRUE(allocated);
+    for (unsigned mode = 0; mode < 5; ++mode) {
+        FakeMemory context;
+        fake            = &context;
+        auto allocator  = MakeAllocator().unwrap_unchecked();
+        auto info       = PoolInfo();
+        info.min_blocks = 1;
+        auto pool       = allocator.create_pool(info).unwrap_unchecked();
+        auto kept       = pool.create_buffer(BufferInfo(256)).unwrap_unchecked();
+        auto memory     = kept.allocation();
+        auto mapping    = memory.map().unwrap_unchecked();
+        static_cast<unsigned char*>(mapping.data())[0] = 91;
+        auto before                                    = pool.statistics();
+        fake->fail_create                              = mode == 0;
+        fake->fail_allocate                            = mode == 1;
+        fake->fail_bind                                = mode == 2;
+        fake->fail_map                                 = mode == 3;
+        fake->device_lost                              = mode == 4;
+        EXPECT_TRUE(pool.create_buffer(BufferInfo(), { .persistent_mapping = true }).is_err());
+        EXPECT_EQ(pool.statistics().block_count, before.block_count);
+        EXPECT_EQ(pool.statistics().block_bytes, before.block_bytes);
+        EXPECT_EQ(pool.statistics().allocation_count, before.allocation_count);
+        EXPECT_EQ(static_cast<unsigned char*>(mapping.data())[0], 91u);
+    }
+}
+TEST(MemoryPool, BoundedGrowthAndTypeIsolation) {
+    FakeMemory context;
+    fake               = &context;
+    auto allocator     = MakeAllocator().unwrap_unchecked();
+    auto info          = PoolInfo(1);
+    info.max_blocks    = 1;
+    auto       limited = allocator.create_pool(info).unwrap_unchecked();
+    auto       full    = limited.create_buffer(BufferInfo(256)).unwrap_unchecked();
+    const auto before  = fake->attempt_count;
+    EXPECT_EQ(limited.create_buffer(BufferInfo()).unwrap_err_unchecked().kind,
+              vvk::MemoryErrorKind::PoolCapacity);
+    EXPECT_EQ(fake->attempt_count, before);
+    info.max_blocks                   = 0;
+    info.block_policy.shrink_attempts = 2;
+    auto pool                         = allocator.create_pool(info).unwrap_unchecked();
+    auto a                            = pool.create_buffer(BufferInfo(256)).unwrap_unchecked();
+    fake->max_success_size            = 256;
+    auto b                            = pool.create_buffer(BufferInfo(128)).unwrap_unchecked();
+    EXPECT_EQ(b.allocation().info().selection.device_allocation_attempts, 2u);
+    EXPECT_EQ(pool.statistics().block_bytes, 512u);
+    fake->reject_types = 2;
+    auto c             = pool.create_buffer(BufferInfo(512));
+    ASSERT_TRUE(c.is_err());
+    EXPECT_EQ(c.unwrap_err_unchecked().device_allocation_attempts, 1u);
+    EXPECT_EQ(fake->attempts[fake->attempt_count - 1].type, 1u);
+    EXPECT_FALSE(fake->attempts[fake->attempt_count - 1].dedicated);
+    auto optimal_info           = PoolInfo(1);
+    optimal_info.resource_class = vvk::MemoryClass::Optimal;
+    optimal_info.block_policy   = { 1024, 1024, 0, false };
+    fake->reject_types          = 0;
+    fake->max_success_size      = 1024;
+    auto optimal                = allocator.create_pool(optimal_info).unwrap_unchecked();
+    auto image                  = optimal.create_image(ImageInfo());
+    ASSERT_TRUE(image.is_ok());
+    EXPECT_EQ(optimal.create_buffer(BufferInfo()).unwrap_err_unchecked().kind,
+              vvk::MemoryErrorKind::PoolIncompatible);
+    auto linear_image_info   = ImageInfo();
+    linear_image_info.tiling = VK_IMAGE_TILING_LINEAR;
+    auto linear              = allocator.create_pool(PoolInfo(1)).unwrap_unchecked();
+    auto linear_image        = linear.create_image(linear_image_info);
+    ASSERT_TRUE(linear_image.is_ok());
+}
+TEST(MemoryPool, AllocationMetadataRollbackPreservesLiveResources) {
+    bool succeeded = false;
+    for (int fail_at = 0; fail_at < 16; ++fail_at) {
+        FakeMemory context;
+        fake = &context;
+        MemoryFailMetadata metadata;
+        {
+            auto allocator = MakeAllocator(alloc::allocator_ref(metadata)).unwrap_unchecked();
+            auto pool      = allocator.create_pool(PoolInfo()).unwrap_unchecked();
+            auto kept      = pool.create_buffer(BufferInfo(256)).unwrap_unchecked();
+            auto mapped    = kept.allocation().map().unwrap_unchecked();
+            static_cast<unsigned char*>(mapped.data())[0] = 53;
+            metadata.remaining                            = fail_at;
+            {
+                auto result = pool.create_buffer(BufferInfo(), { .persistent_mapping = true });
+                if (result.is_ok())
+                    succeeded = true;
+                else {
+                    EXPECT_EQ(result.unwrap_err_unchecked().kind, vvk::MemoryErrorKind::HostMemory);
+                    EXPECT_EQ(pool.statistics().block_count, 1u);
+                    EXPECT_EQ(pool.statistics().block_bytes, 256u);
+                }
+            }
+            EXPECT_EQ(pool.statistics().allocation_count, 1u);
+            EXPECT_EQ(pool.statistics().requested_bytes, 256u);
+            EXPECT_EQ(static_cast<unsigned char*>(mapped.data())[0], 53u);
+        }
+        EXPECT_EQ(metadata.live, 0);
+        EXPECT_EQ(fake->allocations, fake->frees);
+        EXPECT_EQ(fake->creates, fake->destroys);
+    }
+    EXPECT_TRUE(succeeded);
+}
+TEST(MemoryPool, ReservedByteOverflowIsRejected) {
+    FakeMemory context;
+    fake            = &context;
+    fake->heap_size = fake->max_allocation_size = fake->max_success_size = ~VkDeviceSize(0);
+    auto allocator         = MakeAllocator().unwrap_unchecked();
+    auto info              = PoolInfo(1);
+    info.block_policy      = { VkDeviceSize(1) << 63, ~VkDeviceSize(0), 0, false };
+    auto pool              = allocator.create_pool(info).unwrap_unchecked();
+    fake->requirement_size = (VkDeviceSize(1) << 63) - 1;
+    auto large             = pool.create_buffer(BufferInfo());
+    ASSERT_TRUE(large.is_ok());
+    fake->requirement_size = 0;
+    auto failed            = pool.create_buffer(BufferInfo());
+    ASSERT_TRUE(failed.is_err());
+    EXPECT_EQ(failed.unwrap_err_unchecked().kind, vvk::MemoryErrorKind::InvalidRequest);
+    EXPECT_EQ(fake->attempt_count, 1u);
+    EXPECT_EQ(pool.statistics().block_bytes, VkDeviceSize(1) << 63);
 }

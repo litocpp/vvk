@@ -23,6 +23,14 @@ TEST(Memory, ModuleOnlyPublicInterface) {
     EXPECT_EQ(upload.host_access, vvk::MemoryHostAccess::SequentialWrite);
     VkBufferDeviceAddressInfo address { VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO };
     EXPECT_EQ(address.buffer, VkBuffer {});
+    vvk::MemoryPoolCreateInfo pool_info;
+    pool_info.resource_class = vvk::MemoryClass::Optimal;
+    EXPECT_NE(pool_info.memory_type, 0u);
+    vvk::MemoryPool pool;
+    EXPECT_EQ(pool.statistics().block_count, 0u);
+    EXPECT_TRUE(pool.create_image(image).is_err());
+    pool.trim();
+    pool.reset();
     vvk::AllocatedBuffer buffer;
     EXPECT_TRUE(buffer.device_address().is_err());
     EXPECT_FALSE(buffer.valid());
