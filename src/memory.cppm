@@ -238,11 +238,11 @@ void DropMemoryRegion(MemoryRegion* region) {
     if (region->persistent) UnmapMemoryBlock(block);
     block->ranges.deallocate(region->range.id);
     bool release_block = block->dedicated;
-    if (! release_block && block->ranges.statistics().allocation_count == 0) {
+    if (! release_block && block->ranges.counters().allocation_count == 0) {
         for (auto* other : owner->blocks) {
             if (other != block && ! other->dedicated && other->type == block->type &&
                 other->resource_class == block->resource_class &&
-                other->ranges.statistics().allocation_count == 0) {
+                other->ranges.counters().allocation_count == 0) {
                 release_block = true;
                 break;
             }
@@ -560,7 +560,7 @@ public:
         if (! state_) return;
         for (usize i {}; i < state_->blocks.len();) {
             auto* block = state_->blocks[i];
-            if (block->ranges.statistics().allocation_count == 0) {
+            if (block->ranges.counters().allocation_count == 0) {
                 state_->blocks.remove(i);
                 DestroyMemoryBlock(state_, block);
             } else
@@ -581,7 +581,7 @@ auto MemoryAllocator::budget() const -> MemoryBudgetSnapshot {
         auto& heap = result.heaps[state_->memory.memoryTypes[block->type].heapIndex];
         heap.block_bytes += block->size;
         ++heap.block_count;
-        const auto stats = block->ranges.statistics();
+        const auto stats = block->ranges.counters();
         heap.allocation_bytes += stats.occupied_bytes;
         heap.allocation_count += rstd::uint32_t(stats.allocation_count);
     }
