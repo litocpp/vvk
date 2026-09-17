@@ -8,16 +8,19 @@ namespace
 {
 struct FakeMemory {
     struct Block {
-        bool          live {};
-        VkDeviceSize  size {};
-        unsigned      type {};
-        unsigned      maps {};
-        unsigned char data[8192] {};
+        bool                  live {};
+        VkDeviceSize          size {};
+        unsigned              type {};
+        unsigned              maps {};
+        VkMemoryAllocateFlags flags {};
+        unsigned char         data[8192] {};
     } blocks[128];
     struct Buffer {
-        bool           live {};
-        VkDeviceSize   size {};
-        VkDeviceMemory memory {};
+        bool               live {};
+        VkDeviceSize       size {};
+        VkDeviceMemory     memory {};
+        VkBufferUsageFlags usage {};
+        VkDeviceSize       offset {};
     } buffers[128];
     struct Image {
         bool           live {};
@@ -42,6 +45,8 @@ struct FakeMemory {
     } attempts[256] {};
     VkPhysicalDeviceMemoryProperties topology {};
     unsigned                         requirement_types { 3 }, reject_types {};
+    unsigned                         address_queries {};
+    bool                             zero_address {};
     unsigned                         attempt_count {};
     VkMappedMemoryRange              last_range {};
     VkImageCreateFlags               image_flags {};
@@ -86,7 +91,20 @@ VKAPI_ATTR void VKAPI_CALL MemoryProperties(VkPhysicalDevice,
 }
 VKAPI_ATTR VkResult VKAPI_CALL Allocate(VkDevice, const VkMemoryAllocateInfo*         info,
                                         const VkAllocationCallbacks*, VkDeviceMemory* out) {
-    const bool separate                   = info->pNext != nullptr;
+    const VkMemoryDedicatedAllocateInfo* dedicated_info   = nullptr;
+    VkMemoryAllocateFlags                allocation_flags = 0;
+    for (auto* next = static_cast<const VkBaseInStructure*>(info->pNext); next;
+         next       = next->pNext) {
+        if (next->sType == VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO) {
+            auto* flags      = reinterpret_cast<const VkMemoryAllocateFlagsInfo*>(next);
+            allocation_flags = flags->flags;
+            EXPECT_EQ(flags->deviceMask, 0u);
+        } else if (next->sType == VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO)
+            dedicated_info = reinterpret_cast<const VkMemoryDedicatedAllocateInfo*>(next);
+        else
+            EXPECT_TRUE(false);
+    }
+    const bool separate                   = dedicated_info != nullptr;
     fake->attempts[fake->attempt_count++] = { info->allocationSize,
                                               info->memoryTypeIndex,
                                               separate };
@@ -99,16 +117,17 @@ VKAPI_ATTR VkResult VKAPI_CALL Allocate(VkDevice, const VkMemoryAllocateInfo*   
     if (fake->fail_allocate || (fake->reject_device && info->memoryTypeIndex == 1))
         return VK_ERROR_OUT_OF_DEVICE_MEMORY;
 
-    auto i               = fake->next_block++;
-    fake->blocks[i].live = true;
-    fake->blocks[i].size = info->allocationSize;
-    fake->blocks[i].type = info->memoryTypeIndex;
-    *out                 = handle<VkDeviceMemory>(i);
+    auto i                = fake->next_block++;
+    fake->blocks[i].live  = true;
+    fake->blocks[i].size  = info->allocationSize;
+    fake->blocks[i].type  = info->memoryTypeIndex;
+    fake->blocks[i].flags = allocation_flags;
+    *out                  = handle<VkDeviceMemory>(i);
     ++fake->allocations;
     if (fake->dedicated) {
         EXPECT_NE(info->pNext, nullptr);
-        const auto* d = static_cast<const VkMemoryDedicatedAllocateInfo*>(info->pNext);
-        EXPECT_TRUE(d->buffer || d->image);
+        EXPECT_NE(dedicated_info, nullptr);
+        EXPECT_TRUE(dedicated_info->buffer || dedicated_info->image);
     }
     return VK_SUCCESS;
 }
@@ -123,10 +142,11 @@ VKAPI_ATTR void VKAPI_CALL Free(VkDevice, VkDeviceMemory memory, const VkAllocat
 VKAPI_ATTR VkResult VKAPI_CALL CreateBuffer(VkDevice, const VkBufferCreateInfo*     info,
                                             const VkAllocationCallbacks*, VkBuffer* out) {
     if (fake->fail_create) return VK_ERROR_OUT_OF_DEVICE_MEMORY;
-    auto i                = fake->next_buffer++;
-    fake->buffers[i].live = true;
-    fake->buffers[i].size = info->size;
-    *out                  = handle<VkBuffer>(i);
+    auto i                 = fake->next_buffer++;
+    fake->buffers[i].live  = true;
+    fake->buffers[i].size  = info->size;
+    fake->buffers[i].usage = info->usage;
+    *out                   = handle<VkBuffer>(i);
     ++fake->creates;
     return VK_SUCCESS;
 }
@@ -174,6 +194,7 @@ VKAPI_ATTR VkResult VKAPI_CALL BindBuffer(VkDevice, VkBuffer buffer, VkDeviceMem
     if (fake->fail_bind) return VK_ERROR_OUT_OF_DEVICE_MEMORY;
     EXPECT_EQ(offset % 16, 0u);
     fake->buffers[index(buffer)].memory = memory;
+    fake->buffers[index(buffer)].offset = offset;
     return VK_SUCCESS;
 }
 VKAPI_ATTR VkResult VKAPI_CALL BindImage(VkDevice, VkImage image, VkDeviceMemory memory,
@@ -213,9 +234,18 @@ VKAPI_ATTR VkResult VKAPI_CALL Invalidate(VkDevice, unsigned count,
     ++fake->invalidates;
     return VK_SUCCESS;
 }
+VKAPI_ATTR VkDeviceAddress VKAPI_CALL BufferAddress(VkDevice,
+                                                    const VkBufferDeviceAddressInfo* info) {
+    ++fake->address_queries;
+    const auto& buffer = fake->buffers[index(info->buffer)];
+    EXPECT_TRUE(buffer.live);
+    EXPECT_TRUE(buffer.usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+    EXPECT_TRUE(fake->blocks[index(buffer.memory)].flags & VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT);
+    return fake->zero_address ? 0 : VkDeviceAddress(index(buffer.memory)) * 65536 + buffer.offset;
+}
 auto MakeAllocator(vvk::MemoryMetadata    metadata    = alloc::allocator_ref(alloc::GLOBAL),
                    bool                   format_list = false,
-                   vvk::MemoryBlockPolicy policy      = { 1024, 1024, 0, false }) {
+                   vvk::MemoryBlockPolicy policy = { 1024, 1024, 0, false }, bool address = false) {
     vvk::MemoryDispatch            dispatch { Properties,
                                               MemoryProperties,
                                               Allocate,
@@ -232,10 +262,15 @@ auto MakeAllocator(vvk::MemoryMetadata    metadata    = alloc::allocator_ref(all
                                               Unmap,
                                               Flush,
                                               Invalidate,
-                                              Properties2 };
-    vvk::MemoryAllocatorCreateInfo info {
-        handle<VkPhysicalDevice>(1), handle<VkDevice>(1), policy, true, dispatch, format_list
-    };
+                                              Properties2,
+                                              BufferAddress };
+    vvk::MemoryAllocatorCreateInfo info { handle<VkPhysicalDevice>(1),
+                                          handle<VkDevice>(1),
+                                          policy,
+                                          true,
+                                          dispatch,
+                                          format_list,
+                                          address };
     return vvk::MemoryAllocator::Create(info, metadata);
 }
 auto BufferInfo(VkDeviceSize size = 73) -> VkBufferCreateInfo {
@@ -1304,4 +1339,95 @@ TEST(Memory, InvalidAccessIntentRollsBack) {
     EXPECT_EQ(second.unwrap_err_unchecked().kind, vvk::MemoryErrorKind::InvalidRequest);
     EXPECT_EQ(fake->attempt_count, 0u);
     EXPECT_EQ(fake->creates, fake->destroys);
+}
+
+TEST(Memory, BufferAddressCapabilityAndBlockIsolation) {
+    FakeMemory context;
+    fake      = &context;
+    auto info = BufferInfo(128);
+    info.usage |= VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+    auto disabled = MakeAllocator().unwrap_unchecked();
+    auto denied   = disabled.create_buffer(info);
+    ASSERT_TRUE(denied.is_err());
+    EXPECT_EQ(denied.unwrap_err_unchecked().kind, vvk::MemoryErrorKind::Unsupported);
+    EXPECT_EQ(fake->creates, 0u);
+    auto allocator =
+        MakeAllocator(alloc::allocator_ref(alloc::GLOBAL), false, { 256, 1024, 0, true }, true)
+            .unwrap_unchecked();
+    auto plain  = allocator.create_buffer(BufferInfo(128)).unwrap_unchecked();
+    auto first  = allocator.create_buffer(info).unwrap_unchecked();
+    auto second = allocator.create_buffer(info).unwrap_unchecked();
+    EXPECT_NE(plain.allocation().info().memory, first.allocation().info().memory);
+    EXPECT_EQ(first.allocation().info().memory, second.allocation().info().memory);
+    EXPECT_EQ(first.allocation().info().allocation_flags, VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT);
+    EXPECT_EQ(plain.allocation().info().allocation_flags, 0u);
+    auto capture  = info;
+    capture.flags = VK_BUFFER_CREATE_DEVICE_ADDRESS_CAPTURE_REPLAY_BIT;
+    EXPECT_TRUE(allocator.create_buffer(capture).is_err());
+    VkBufferOpaqueCaptureAddressCreateInfo opaque {
+        VK_STRUCTURE_TYPE_BUFFER_OPAQUE_CAPTURE_ADDRESS_CREATE_INFO
+    };
+    capture.flags = 0;
+    capture.pNext = &opaque;
+    EXPECT_TRUE(allocator.create_buffer(capture).is_err());
+    auto a = first.device_address(), b = second.device_address();
+    ASSERT_TRUE(a.is_ok());
+    ASSERT_TRUE(b.is_ok());
+    EXPECT_NE(a.unwrap_unchecked(), b.unwrap_unchecked());
+    EXPECT_EQ(b.unwrap_unchecked() - a.unwrap_unchecked(), 128u);
+    auto clone = second.clone();
+    second.reset();
+    EXPECT_EQ(clone.device_address().unwrap_unchecked(), b.unwrap_unchecked());
+    EXPECT_TRUE(second.device_address().is_err());
+    EXPECT_TRUE(plain.device_address().is_err());
+    fake->zero_address = true;
+    EXPECT_TRUE(first.device_address().is_err());
+    fake->zero_address = false;
+    plain.reset();
+    first.reset();
+    clone.reset();
+    EXPECT_EQ(allocator.budget().heaps[0].block_count, 2u);
+    allocator.trim();
+    EXPECT_EQ(fake->allocations, fake->frees);
+    EXPECT_EQ(fake->creates, fake->destroys);
+}
+
+TEST(Memory, AddressAllocationRollbackAndDedicatedChain) {
+    bool succeeded = false;
+    for (int mode = 0; mode < 24; ++mode) {
+        FakeMemory context;
+        fake = &context;
+        MemoryFailMetadata metadata { mode < 4 ? -1 : mode - 4 };
+        {
+            auto made =
+                MakeAllocator(alloc::allocator_ref(metadata), false, { 1024, 1024, 0, true }, true);
+            if (made.is_ok()) {
+                auto allocator = made.unwrap_unchecked();
+                auto info      = BufferInfo();
+                info.usage |= VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+                fake->dedicated     = true;
+                fake->fail_allocate = mode == 0;
+                fake->fail_bind     = mode == 1;
+                fake->fail_create   = mode == 2;
+                fake->device_lost   = mode == 3;
+                {
+                    auto result = allocator.create_buffer(info);
+                    if (mode < 4) {
+                        EXPECT_TRUE(result.is_err());
+                    }
+                    if (result.is_ok()) {
+                        auto buffer = result.unwrap_unchecked();
+                        EXPECT_TRUE(buffer.allocation().info().dedicated);
+                        EXPECT_TRUE(buffer.device_address().is_ok());
+                        succeeded = true;
+                    }
+                }
+                EXPECT_EQ(allocator.budget().heaps[0].allocation_count, 0u);
+            }
+        }
+        EXPECT_EQ(fake->allocations, fake->frees);
+        EXPECT_EQ(fake->creates, fake->destroys);
+        EXPECT_EQ(metadata.live, 0);
+    }
+    EXPECT_TRUE(succeeded);
 }

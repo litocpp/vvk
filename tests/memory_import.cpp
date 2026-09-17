@@ -21,7 +21,10 @@ TEST(Memory, ModuleOnlyPublicInterface) {
     upload.preferred  = VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
     upload.preference = vvk::MemoryPreference::FlagsOnly;
     EXPECT_EQ(upload.host_access, vvk::MemoryHostAccess::SequentialWrite);
+    VkBufferDeviceAddressInfo address { VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO };
+    EXPECT_EQ(address.buffer, VkBuffer {});
     vvk::AllocatedBuffer buffer;
+    EXPECT_TRUE(buffer.device_address().is_err());
     EXPECT_FALSE(buffer.valid());
     EXPECT_FALSE(buffer.allocation().valid());
 }

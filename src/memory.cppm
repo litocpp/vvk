@@ -31,6 +31,7 @@ struct MemoryDispatch {
     PFN_vkFlushMappedMemoryRanges            flush {};
     PFN_vkInvalidateMappedMemoryRanges       invalidate {};
     PFN_vkGetPhysicalDeviceProperties2       properties2 {};
+    PFN_vkGetBufferDeviceAddress             buffer_device_address {};
     static MemoryDispatch                    FromDispatch(const InstanceDispatch& instance,
                                                           const DeviceDispatch&   dispatch) noexcept {
         return { instance.vkGetPhysicalDeviceProperties,
@@ -49,7 +50,8 @@ struct MemoryDispatch {
                  dispatch.vkUnmapMemory,
                  dispatch.vkFlushMappedMemoryRanges,
                  dispatch.vkInvalidateMappedMemoryRanges,
-                 instance.vkGetPhysicalDeviceProperties2 };
+                 instance.vkGetPhysicalDeviceProperties2,
+                 dispatch.vkGetBufferDeviceAddress };
     }
     bool valid() const noexcept {
         return properties && memory_properties && allocate && free && create_buffer &&
@@ -96,15 +98,18 @@ struct MemoryAllocatorCreateInfo {
     // Core Vulkan 1.2 or enabled VK_KHR_image_format_list.
     bool              image_format_list_enabled {};
     MemoryBlockPolicy block_policy {};
+    bool              buffer_device_address_enabled {};
     MemoryAllocatorCreateInfo() = default;
     MemoryAllocatorCreateInfo(VkPhysicalDevice physical, VkDevice device, MemoryBlockPolicy policy,
-                              bool budget, MemoryDispatch dispatch, bool image_format_list = false)
+                              bool budget, MemoryDispatch dispatch, bool image_format_list = false,
+                              bool buffer_device_address = false)
         : physical_device(physical),
           device(device),
           memory_budget_enabled(budget),
           dispatch(dispatch),
           image_format_list_enabled(image_format_list),
-          block_policy(policy) {}
+          block_policy(policy),
+          buffer_device_address_enabled(buffer_device_address) {}
 };
 enum class MemoryHostAccess
 {
@@ -171,6 +176,7 @@ struct MemoryInfo {
     bool                  dedicated {};
     rstd::uint32_t        heap {};
     MemorySelectionInfo   selection {};
+    VkMemoryAllocateFlags allocation_flags {};
 };
 enum class MemoryBudgetSource
 {
@@ -230,8 +236,9 @@ enum class MemoryClass
     Optimal
 };
 struct ResourceMemoryConstraints {
-    MemoryClass resource_class;
-    bool        device_access;
+    MemoryClass           resource_class;
+    bool                  device_access;
+    VkMemoryAllocateFlags allocation_flags {};
 };
 auto ParseResourceMemoryConstraints(const VkBufferCreateInfo& info)
     -> Result<ResourceMemoryConstraints, MemoryError> {
@@ -242,12 +249,15 @@ auto ParseResourceMemoryConstraints(const VkBufferCreateInfo& info)
         VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_TEXEL_BUFFER_BIT |
         VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
         VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
-        VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
+        VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
     if (info.flags || info.pNext || (info.usage & ~supported))
         return Err(MemoryError { MemoryErrorKind::Unsupported });
-    return Ok(ResourceMemoryConstraints { MemoryClass::Linear,
-                                          bool(info.usage & ~(VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
-                                                              VK_BUFFER_USAGE_TRANSFER_DST_BIT)) });
+    return Ok(ResourceMemoryConstraints {
+        MemoryClass::Linear,
+        bool(info.usage & ~(VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT)),
+        (info.usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT)
+            ? VkMemoryAllocateFlags(VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT)
+            : 0u });
 }
 auto ParseResourceMemoryConstraints(const VkImageCreateInfo& info, bool format_list_enabled)
     -> Result<ResourceMemoryConstraints, MemoryError> {
@@ -360,16 +370,18 @@ struct MemoryBlock {
     rstd::uint32_t                        type;
     MemoryClass                           resource_class;
     bool                                  dedicated;
+    VkMemoryAllocateFlags                 allocation_flags;
     alloc::RangeAllocator<MemoryMetadata> ranges;
     void*                                 mapped {};
     rstd::size_t                          maps {};
     MemoryBlock(MemoryState* owner, VkDeviceSize size, rstd::uint32_t type, MemoryClass cls,
-                bool dedicated, MemoryMetadata metadata)
+                bool dedicated, VkMemoryAllocateFlags flags, MemoryMetadata metadata)
         : owner(owner),
           size(size),
           type(type),
           resource_class(cls),
           dedicated(dedicated),
+          allocation_flags(flags),
           ranges(size, metadata) {}
 };
 struct MemoryState {
@@ -438,6 +450,7 @@ void DropMemoryRegion(MemoryRegion* region) {
         for (auto* other : owner->blocks) {
             if (other != block && ! other->dedicated && other->type == block->type &&
                 other->resource_class == block->resource_class &&
+                other->allocation_flags == block->allocation_flags &&
                 other->ranges.counters().allocation_count == 0) {
                 release_block = true;
                 break;
@@ -496,7 +509,7 @@ public:
                  region_->requested, region_->range.size,
                  block->type,        region_->owner->memory.memoryTypes[block->type].propertyFlags,
                  block->dedicated,   region_->owner->memory.memoryTypes[block->type].heapIndex,
-                 region_->selection };
+                 region_->selection, block->allocation_flags };
     }
     auto map(VkDeviceSize offset = 0, VkDeviceSize size = VK_WHOLE_SIZE) const
         -> Result<MemoryMapping, MemoryError>;
@@ -649,6 +662,20 @@ public:
     MemoryAllocation allocation() const {
         return resource_ ? resource_->allocation.clone() : MemoryAllocation();
     }
+    // Retain a buffer clone until all GPU users of the returned address have completed.
+    auto device_address() const -> Result<VkDeviceAddress, MemoryError> {
+        if (! resource_) return Err(MemoryError { MemoryErrorKind::InvalidRequest });
+        if (! (resource_->allocation.info().allocation_flags &
+               VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT))
+            return Err(MemoryError { MemoryErrorKind::Unsupported });
+        const auto&               info = resource_->owner->info;
+        VkBufferDeviceAddressInfo query { VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
+                                          nullptr,
+                                          resource_->buffer };
+        auto address = info.dispatch.buffer_device_address(info.device, &query);
+        if (! address) return Err(ApiMemoryError(VK_ERROR_UNKNOWN));
+        return Ok(address);
+    }
 };
 export class AllocatedImage {
     MemoryResource* resource_ {};
@@ -694,8 +721,8 @@ export class MemoryAllocator {
     MemoryState* state_ {};
     explicit MemoryAllocator(MemoryState* state): state_(state) {}
     auto allocate_block(VkDeviceSize bytes, VkDeviceSize size, VkDeviceSize alignment,
-                        rstd::uint32_t type, MemoryClass cls, bool separate, VkBuffer buffer,
-                        VkImage image, bool within_budget) const
+                        rstd::uint32_t type, MemoryClass cls, VkMemoryAllocateFlags flags,
+                        bool separate, VkBuffer buffer, VkImage image, bool within_budget) const
         -> Result<MemoryPlacement, MemoryError>;
     auto allocate(const VkMemoryRequirements&          requirements,
                   const VkMemoryDedicatedRequirements& dedicated,
@@ -733,13 +760,16 @@ public:
                                          policy,
                                          device.capabilities.memory_budget,
                                          MemoryDispatch::FromDispatch(instance, device),
-                                         device.capabilities.image_format_list };
+                                         device.capabilities.image_format_list,
+                                         device.capabilities.buffer_device_address };
         return Create(info, metadata);
     }
     static auto Create(MemoryAllocatorCreateInfo info,
                        MemoryMetadata            metadata = alloc::allocator_ref(alloc::GLOBAL))
         -> Result<MemoryAllocator, MemoryError> {
         if (! info.device || ! info.physical_device || ! info.dispatch.valid())
+            return Err(MemoryError { MemoryErrorKind::InvalidRequest });
+        if (info.buffer_device_address_enabled && ! info.dispatch.buffer_device_address)
             return Err(MemoryError { MemoryErrorKind::InvalidRequest });
         const auto policy = info.block_policy;
         if (! policy.initial_size || ! policy.maximum_size ||
@@ -831,8 +861,9 @@ auto MemoryAllocator::budget() const -> MemoryBudgetSnapshot {
 }
 
 auto MemoryAllocator::allocate_block(VkDeviceSize bytes, VkDeviceSize size, VkDeviceSize alignment,
-                                     rstd::uint32_t type, MemoryClass cls, bool separate,
-                                     VkBuffer buffer, VkImage image, bool within_budget) const
+                                     rstd::uint32_t type, MemoryClass cls,
+                                     VkMemoryAllocateFlags flags, bool separate, VkBuffer buffer,
+                                     VkImage image, bool within_budget) const
     -> Result<MemoryPlacement, MemoryError> {
     auto error = [&](VkResult       result,
                      rstd::uint32_t calls = 0) -> Result<MemoryPlacement, MemoryError> {
@@ -857,7 +888,7 @@ auto MemoryAllocator::allocate_block(VkDeviceSize bytes, VkDeviceSize size, VkDe
     }
     if (state_->blocks.try_reserve(usize(1)).is_err()) return error(VK_ERROR_OUT_OF_HOST_MEMORY);
     auto* block = NewMemoryObject<MemoryBlock>(
-        state_->metadata, state_, bytes, type, cls, separate, state_->metadata);
+        state_->metadata, state_, bytes, type, cls, separate, flags, state_->metadata);
     if (! block) return error(VK_ERROR_OUT_OF_HOST_MEMORY);
     auto allocation = block->ranges.allocate(size, alignment);
     if (allocation.is_err()) {
@@ -870,10 +901,16 @@ auto MemoryAllocator::allocate_block(VkDeviceSize bytes, VkDeviceSize size, VkDe
     VkMemoryDedicatedAllocateInfo dedicated_info {
         VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO, nullptr, image, buffer
     };
-    VkMemoryAllocateInfo info {
-        VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, separate ? &dedicated_info : nullptr, bytes, type
+    VkMemoryAllocateFlagsInfo flags_info {
+        VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO, separate ? &dedicated_info : nullptr, flags, 0
     };
-    auto result =
+    VkMemoryAllocateInfo info { VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+                                flags      ? static_cast<const void*>(&flags_info)
+                                : separate ? &dedicated_info
+                                           : nullptr,
+                                bytes,
+                                type };
+    auto                 result =
         state_->info.dispatch.allocate(state_->info.device, &info, nullptr, &block->memory);
     if (result != VK_SUCCESS) {
         DeleteMemoryObject(state_->metadata, block);
@@ -944,7 +981,9 @@ auto MemoryAllocator::allocate(const VkMemoryRequirements&          req,
             VkDeviceSize largest = 0;
             if (! separate) {
                 for (auto* block : state_->blocks) {
-                    if (block->dedicated || block->type != selected || block->resource_class != cls)
+                    if (block->dedicated || block->type != selected ||
+                        block->resource_class != cls ||
+                        block->allocation_flags != resource.allocation_flags)
                         continue;
                     if (block->size > largest) largest = block->size;
                     auto range = block->ranges.allocate(size, alignment);
@@ -976,6 +1015,7 @@ auto MemoryAllocator::allocate(const VkMemoryRequirements&          req,
                                              alignment,
                                              selected,
                                              cls,
+                                             resource.allocation_flags,
                                              separate,
                                              buffer,
                                              image,
@@ -1039,7 +1079,9 @@ auto MemoryAllocator::create_buffer(const VkBufferCreateInfo& info, MemoryReques
     auto parsed = ParseResourceMemoryConstraints(info);
     if (parsed.is_err()) return Err(parsed.unwrap_err_unchecked());
     const auto constraints = parsed.unwrap_unchecked();
-    VkBuffer   buffer {};
+    if (constraints.allocation_flags && ! state_->info.buffer_device_address_enabled)
+        return Err(MemoryError { MemoryErrorKind::Unsupported });
+    VkBuffer buffer {};
     auto result = state_->info.dispatch.create_buffer(state_->info.device, &info, nullptr, &buffer);
     if (result != VK_SUCCESS) return Err(ApiMemoryError(result));
     VkMemoryDedicatedRequirements dedicated { VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS };

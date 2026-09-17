@@ -490,4 +490,15 @@ export {
     using ::VkMappedMemoryRange;
     using ::VkMemoryDedicatedRequirements;
     using ::VkPhysicalDeviceMemoryBudgetPropertiesEXT;
+
+    using ::VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+    using ::VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
+    using ::VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
+    using ::VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
+    using ::VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES;
+    using ::VkBufferDeviceAddressInfo;
+    using ::VkDeviceAddress;
+    using ::VkMemoryAllocateFlags;
+    using ::VkMemoryAllocateFlagsInfo;
+    using ::VkPhysicalDeviceBufferDeviceAddressFeatures;
 }

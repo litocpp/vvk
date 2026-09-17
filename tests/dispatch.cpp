@@ -429,3 +429,88 @@ TEST(Dispatch, ImageFormatListCapability) {
     info.ppEnabledExtensionNames = &extension;
     EXPECT_TRUE(parse(VK_API_VERSION_1_1).image_format_list);
 }
+
+TEST(Dispatch, BufferAddressFeaturesAndAliases) {
+    for (unsigned mode = 0; mode < 3; ++mode) {
+        state                           = {};
+        auto parent                     = Parent();
+        parent.capabilities.api_version = mode == 1 ? VK_API_VERSION_1_1 : VK_API_VERSION_1_2;
+        VkDeviceCreateInfo                          info { VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
+        VkPhysicalDeviceBufferDeviceAddressFeatures feature {
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES
+        };
+        feature.bufferDeviceAddress = mode != 2;
+        info.pNext                  = &feature;
+        const char* extension       = VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME;
+        if (mode == 1) {
+            info.enabledExtensionCount   = 1;
+            info.ppEnabledExtensionNames = &extension;
+        }
+        auto parsed = vvk::ParseDeviceCapabilities(info, parent.capabilities, VK_API_VERSION_1_2);
+        ASSERT_TRUE(parsed.is_ok());
+        auto caps = parsed.unwrap_unchecked();
+        EXPECT_EQ(caps.buffer_device_address, mode != 2);
+        auto loaded = vvk::LoadDevice(parent, state.expected_device, caps);
+        ASSERT_TRUE(loaded.is_ok());
+        EXPECT_EQ(state.queried("vkGetBufferDeviceAddress"), mode == 0);
+        EXPECT_EQ(state.queried("vkGetBufferDeviceAddressKHR"), mode == 1);
+        EXPECT_FALSE(state.queried("vkGetBufferDeviceAddressEXT"));
+        if (mode != 2) {
+            state.missing = mode == 0 ? "vkGetBufferDeviceAddress" : "vkGetBufferDeviceAddressKHR";
+            auto missing  = vvk::LoadDevice(parent, state.expected_device, caps);
+            ASSERT_TRUE(missing.is_err());
+            EXPECT_EQ(missing.unwrap_err_unchecked().kind, vvk::DispatchErrorKind::MissingCommand);
+            vvk::Device         owner;
+            vvk::DeviceDispatch table;
+            auto                created =
+                vvk::Device::Create(owner, Fake<VkPhysicalDevice>(3), parent, info, table);
+            EXPECT_TRUE(created.is_err());
+            EXPECT_EQ(state.device_destroyed, 1u);
+        }
+    }
+    VkDeviceCreateInfo               info { VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
+    VkPhysicalDeviceVulkan12Features feature {
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES
+    };
+    feature.bufferDeviceAddress = VK_TRUE;
+    info.pNext                  = &feature;
+    vvk::InstanceCapabilities parent { .api_version = VK_API_VERSION_1_2 };
+    EXPECT_TRUE(vvk::ParseDeviceCapabilities(info, parent, VK_API_VERSION_1_2)
+                    .unwrap_unchecked()
+                    .buffer_device_address);
+    EXPECT_TRUE(vvk::ParseDeviceCapabilities(info, parent, VK_API_VERSION_1_1).is_err());
+    VkDeviceGroupDeviceCreateInfo group { VK_STRUCTURE_TYPE_DEVICE_GROUP_DEVICE_CREATE_INFO };
+    group.physicalDeviceCount = 2;
+    feature.pNext             = &group;
+    EXPECT_TRUE(vvk::ParseDeviceCapabilities(info, parent, VK_API_VERSION_1_2).is_err());
+    VkPhysicalDeviceBufferDeviceAddressFeatures duplicate {
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES
+    };
+    feature.pNext = &duplicate;
+    EXPECT_TRUE(vvk::ParseDeviceCapabilities(info, parent, VK_API_VERSION_1_2).is_err());
+}
+
+TEST(Dispatch, BufferAddressExtensionDoesNotEnableFeature) {
+    state                           = {};
+    auto parent                     = Parent();
+    parent.capabilities.api_version = VK_API_VERSION_1_1;
+    VkDeviceCreateInfo info { VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
+    const char*        extension = VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME;
+    info.enabledExtensionCount   = 1;
+    info.ppEnabledExtensionNames = &extension;
+    auto parsed = vvk::ParseDeviceCapabilities(info, parent.capabilities, VK_API_VERSION_1_1);
+    ASSERT_TRUE(parsed.is_ok());
+    auto caps = parsed.unwrap_unchecked();
+    EXPECT_FALSE(caps.buffer_device_address);
+    EXPECT_TRUE(vvk::LoadDevice(parent, state.expected_device, caps).is_ok());
+    EXPECT_FALSE(state.queried("vkGetBufferDeviceAddressKHR"));
+    VkPhysicalDeviceBufferDeviceAddressFeaturesEXT old {
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES_EXT
+    };
+    old.bufferDeviceAddress = VK_TRUE;
+    extension               = VK_EXT_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME;
+    info.pNext              = &old;
+    EXPECT_FALSE(vvk::ParseDeviceCapabilities(info, parent.capabilities, VK_API_VERSION_1_1)
+                     .unwrap_unchecked()
+                     .buffer_device_address);
+}

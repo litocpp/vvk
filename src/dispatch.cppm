@@ -48,6 +48,8 @@ struct DeviceCapabilities {
     rstd::uint32_t api_version { VK_API_VERSION_1_1 };
     bool           swapchain {}, memory_budget {}, debug_utils {}, image_format_list {};
     bool           timeline_semaphore {}, timeline_extension {};
+    bool           buffer_device_address {}, buffer_device_address_extension {};
+    rstd::uint32_t physical_device_count { 1 };
     bool           synchronization2 {}, synchronization2_extension {};
     bool           push_descriptor {}, external_memory_fd {}, external_semaphore_fd {},
         drm_format_modifier {};
@@ -188,6 +190,7 @@ struct DeviceDispatch {
     PFN_vkFreeDescriptorSets                     vkFreeDescriptorSets {};
     PFN_vkFreeMemory                             vkFreeMemory {};
     PFN_vkGetBufferMemoryRequirements2           vkGetBufferMemoryRequirements2 {};
+    PFN_vkGetBufferDeviceAddress                 vkGetBufferDeviceAddress {};
     PFN_vkGetDeviceQueue                         vkGetDeviceQueue {};
     PFN_vkGetEventStatus                         vkGetEventStatus {};
     PFN_vkGetFenceStatus                         vkGetFenceStatus {};

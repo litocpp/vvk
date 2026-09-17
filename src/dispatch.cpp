@@ -58,14 +58,16 @@ auto ParseDeviceCapabilities(const VkDeviceCreateInfo& info, const InstanceCapab
             DispatchErrorKind::Unsupported, DispatchStage::Device, "VK_KHR_surface" });
     caps.image_format_list =
         caps.api_version >= VK_API_VERSION_1_2 || enabled("VK_KHR_image_format_list");
-    caps.memory_budget                 = enabled("VK_EXT_memory_budget");
-    caps.timeline_extension            = enabled("VK_KHR_timeline_semaphore");
-    caps.synchronization2_extension    = enabled("VK_KHR_synchronization2");
-    caps.push_descriptor               = enabled("VK_KHR_push_descriptor");
-    caps.external_memory_fd            = enabled("VK_KHR_external_memory_fd");
-    caps.external_semaphore_fd         = enabled("VK_KHR_external_semaphore_fd");
-    caps.drm_format_modifier           = enabled("VK_EXT_image_drm_format_modifier");
-    caps.pipeline_executable_extension = enabled("VK_KHR_pipeline_executable_properties");
+    caps.buffer_device_address_extension = enabled("VK_KHR_buffer_device_address");
+    bool address_features_seen           = false;
+    caps.memory_budget                   = enabled("VK_EXT_memory_budget");
+    caps.timeline_extension              = enabled("VK_KHR_timeline_semaphore");
+    caps.synchronization2_extension      = enabled("VK_KHR_synchronization2");
+    caps.push_descriptor                 = enabled("VK_KHR_push_descriptor");
+    caps.external_memory_fd              = enabled("VK_KHR_external_memory_fd");
+    caps.external_semaphore_fd           = enabled("VK_KHR_external_semaphore_fd");
+    caps.drm_format_modifier             = enabled("VK_EXT_image_drm_format_modifier");
+    caps.pipeline_executable_extension   = enabled("VK_KHR_pipeline_executable_properties");
     for (auto* next = static_cast<const VkBaseInStructure*>(info.pNext); next; next = next->pNext) {
         switch (next->sType) {
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES:
@@ -73,7 +75,29 @@ auto ParseDeviceCapabilities(const VkDeviceCreateInfo& info, const InstanceCapab
                 reinterpret_cast<const VkPhysicalDeviceTimelineSemaphoreFeatures*>(next)
                     ->timelineSemaphore;
             break;
+        case VK_STRUCTURE_TYPE_DEVICE_GROUP_DEVICE_CREATE_INFO:
+            caps.physical_device_count =
+                reinterpret_cast<const VkDeviceGroupDeviceCreateInfo*>(next)->physicalDeviceCount;
+            break;
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES:
+            if (address_features_seen)
+                return Err(DispatchError { DispatchErrorKind::InvalidInput,
+                                           DispatchStage::Device,
+                                           "bufferDeviceAddress" });
+            address_features_seen = true;
+            caps.buffer_device_address =
+                reinterpret_cast<const VkPhysicalDeviceBufferDeviceAddressFeatures*>(next)
+                    ->bufferDeviceAddress;
+            break;
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES:
+            if (address_features_seen)
+                return Err(DispatchError { DispatchErrorKind::InvalidInput,
+                                           DispatchStage::Device,
+                                           "bufferDeviceAddress" });
+            address_features_seen = true;
+            caps.buffer_device_address =
+                reinterpret_cast<const VkPhysicalDeviceVulkan12Features*>(next)
+                    ->bufferDeviceAddress;
             caps.timeline_semaphore =
                 reinterpret_cast<const VkPhysicalDeviceVulkan12Features*>(next)->timelineSemaphore;
             break;
@@ -95,6 +119,11 @@ auto ParseDeviceCapabilities(const VkDeviceCreateInfo& info, const InstanceCapab
         default: break;
         }
     }
+    if (caps.buffer_device_address &&
+        ((caps.api_version < VK_API_VERSION_1_2 && ! caps.buffer_device_address_extension) ||
+         caps.physical_device_count != 1 || enabled("VK_EXT_buffer_device_address")))
+        return Err(DispatchError {
+            DispatchErrorKind::Unsupported, DispatchStage::Device, "bufferDeviceAddress" });
     if (caps.timeline_semaphore && caps.api_version < VK_API_VERSION_1_2 &&
         ! caps.timeline_extension)
         return Err(DispatchError {
@@ -184,6 +213,9 @@ auto LoadDevice(const InstanceDispatch& parent, VkDevice device, DeviceCapabilit
         return Err(DispatchError { DispatchErrorKind::InvalidInput, DispatchStage::Device });
     if (VK_API_VERSION_VARIANT(caps.api_version) != 0 || caps.api_version < VK_API_VERSION_1_1 ||
         caps.api_version > parent.capabilities.api_version ||
+        (caps.buffer_device_address &&
+         ((caps.api_version < VK_API_VERSION_1_2 && ! caps.buffer_device_address_extension) ||
+          caps.physical_device_count != 1)) ||
         (caps.timeline_semaphore && caps.api_version < VK_API_VERSION_1_2 &&
          ! caps.timeline_extension) ||
         (caps.synchronization2 && caps.api_version < VK_API_VERSION_1_3 &&
@@ -338,6 +370,11 @@ auto LoadDevice(const InstanceDispatch& parent, VkDevice device, DeviceCapabilit
     }
     if (caps.pipeline_executable) {
         LOAD(vkGetPipelineExecutableStatisticsKHR);
+    }
+    if (caps.buffer_device_address) {
+        LOAD_AS(vkGetBufferDeviceAddress,
+                caps.api_version >= VK_API_VERSION_1_2 ? "vkGetBufferDeviceAddress"
+                                                       : "vkGetBufferDeviceAddressKHR");
     }
     LOAD(vkGetQueryPoolResults);
     if (caps.timeline_semaphore) {

@@ -2,6 +2,7 @@
 #include <rstd/test/gtest.hpp>
 #include <cstdio>
 #include <cstring>
+#include "shaders/address.hpp"
 import rstd;
 import vvk;
 using namespace rstd::prelude;
@@ -47,7 +48,8 @@ struct VulkanMemoryTest {
         }
         return VK_FALSE;
     }
-    bool initialize(unsigned api = VK_API_VERSION_1_1, bool format_list_extension = false) {
+    bool initialize(unsigned api = VK_API_VERSION_1_1, bool format_list_extension = false,
+                    bool address = false) {
         auto opened = vvk::VulkanLoader::Open();
         if (opened.is_err()) {
             auto error  = opened.unwrap_err_unchecked();
@@ -138,7 +140,8 @@ struct VulkanMemoryTest {
             instance_dispatch.vkGetPhysicalDeviceQueueFamilyProperties(
                 candidate, &families, queues.as_mut_ptr().as_raw_ptr());
             for (unsigned i = 0; i < families; ++i)
-                if (queues[usize(i)].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
+                if ((queues[usize(i)].queueFlags & VK_QUEUE_GRAPHICS_BIT) &&
+                    (! address || (queues[usize(i)].queueFlags & VK_QUEUE_COMPUTE_BIT))) {
                     gpu        = candidate;
                     family     = i;
                     properties = candidate_properties;
@@ -157,29 +160,48 @@ struct VulkanMemoryTest {
         VkDeviceCreateInfo device_info { VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
         device_info.queueCreateInfoCount = 1;
         device_info.pQueueCreateInfos    = &queue_info;
-        const char* format_list_name     = VK_KHR_IMAGE_FORMAT_LIST_EXTENSION_NAME;
-        if (format_list_extension) {
-            unsigned extension_count = 0;
+        const char* enabled_extensions[2] {};
+        unsigned    enabled_count    = 0;
+        auto        enable_extension = [&](const char* name) {
+            unsigned count = 0;
             if (instance_dispatch.vkEnumerateDeviceExtensionProperties(
-                    gpu, nullptr, &extension_count, nullptr) != VK_SUCCESS)
+                    gpu, nullptr, &count, nullptr) != VK_SUCCESS)
                 return false;
-            auto extensions =
-                alloc::vec::Vec<VkExtensionProperties>::with_capacity(usize(extension_count));
-            for (unsigned i = 0; i < extension_count; ++i)
-                extensions.push(VkExtensionProperties {});
+            auto extensions = alloc::vec::Vec<VkExtensionProperties>::with_capacity(usize(count));
+            for (unsigned i = 0; i < count; ++i) extensions.push(VkExtensionProperties {});
             if (instance_dispatch.vkEnumerateDeviceExtensionProperties(
-                    gpu, nullptr, &extension_count, extensions.as_mut_ptr().as_raw_ptr()) !=
-                VK_SUCCESS)
+                    gpu, nullptr, &count, extensions.as_mut_ptr().as_raw_ptr()) != VK_SUCCESS)
                 return false;
-            bool supported = false;
-            for (const auto& item : extensions)
-                supported |= std::strcmp(item.extensionName, format_list_name) == 0;
-            if (! supported) {
+            for (const auto& extension : extensions) {
+                if (std::strcmp(extension.extensionName, name) == 0) {
+                    enabled_extensions[enabled_count++] = name;
+                    return true;
+                }
+            }
+            unavailable = true;
+            return false;
+        };
+        if (format_list_extension && ! enable_extension(VK_KHR_IMAGE_FORMAT_LIST_EXTENSION_NAME))
+            return false;
+        if (address && api < VK_API_VERSION_1_2 &&
+            ! enable_extension(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME))
+            return false;
+        device_info.enabledExtensionCount   = enabled_count;
+        device_info.ppEnabledExtensionNames = enabled_extensions;
+        VkPhysicalDeviceBufferDeviceAddressFeatures address_features {
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES
+        };
+        if (address) {
+            VkPhysicalDeviceFeatures2 supported { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
+                                                  &address_features };
+            instance_dispatch.vkGetPhysicalDeviceFeatures2(gpu, &supported);
+            if (! address_features.bufferDeviceAddress) {
                 unavailable = true;
                 return false;
             }
-            device_info.enabledExtensionCount   = 1;
-            device_info.ppEnabledExtensionNames = &format_list_name;
+            address_features.bufferDeviceAddressCaptureReplay = VK_FALSE;
+            address_features.bufferDeviceAddressMultiDevice   = VK_FALSE;
+            device_info.pNext                                 = &address_features;
         }
         auto created =
             vvk::Device::Create(device_owner, gpu, instance_dispatch, device_info, device_dispatch);
@@ -870,4 +892,143 @@ TEST(MemoryVulkan, GrowingAllocatorChurnAndTrim) {
 
 TEST(MemoryVulkan, AccessIntentImageReadback) {
     CheckImageTransfer(VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT, false, VK_API_VERSION_1_1, {}, true);
+}
+
+namespace
+{
+void CheckBufferAddressShader(unsigned api) {
+    VulkanMemoryTest context;
+    const bool       initialized = context.initialize(api, false, true);
+    if (context.unavailable)
+        GTEST_SKIP()
+            << "Requested Vulkan API, BDA feature/extension or graphics-compute queue unavailable";
+    ASSERT_TRUE(initialized);
+    {
+        auto made = vvk::MemoryAllocator::Create(
+            context.gpu, context.instance_dispatch, context.device_dispatch);
+        ASSERT_TRUE(made.is_ok());
+        auto allocator   = made.unwrap_unchecked();
+        auto create_info = BufferCreate(
+            256, VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+        auto padding = allocator.create_buffer(create_info);
+        ASSERT_TRUE(padding.is_ok());
+        for (unsigned dedicated = 0; dedicated < 2; ++dedicated) {
+            auto output_result =
+                allocator.create_buffer(create_info, { .dedicated = dedicated != 0 });
+            auto read_result =
+                allocator.create_buffer(BufferCreate(256, VK_BUFFER_USAGE_TRANSFER_DST_BIT),
+                                        vvk::MemoryRequest::Readback());
+            ASSERT_TRUE(output_result.is_ok());
+            ASSERT_TRUE(read_result.is_ok());
+            auto output         = output_result.unwrap_unchecked(),
+                 readback       = read_result.unwrap_unchecked();
+            auto address_result = output.device_address();
+            ASSERT_TRUE(address_result.is_ok());
+            auto address = address_result.unwrap_unchecked();
+            ASSERT_NE(address, 0u);
+            struct Submission {
+                VulkanMemoryTest&    context;
+                vvk::AllocatedBuffer output, readback;
+                VkShaderModule       shader {};
+                VkPipelineLayout     layout {};
+                VkPipeline           pipeline {};
+                VkCommandBuffer      command {};
+                VkFence              fence {};
+                bool                 completed {};
+                ~Submission() {
+                    auto& d = context.device_dispatch;
+                    if (fence) {
+                        if (! completed && ! context.wait(fence))
+                            d.vkDeviceWaitIdle(context.device);
+                        d.vkDestroyFence(context.device, fence, nullptr);
+                    }
+                    if (command) d.vkFreeCommandBuffers(context.device, context.pool, 1, &command);
+                    if (pipeline) d.vkDestroyPipeline(context.device, pipeline, nullptr);
+                    if (layout) d.vkDestroyPipelineLayout(context.device, layout, nullptr);
+                    if (shader) d.vkDestroyShaderModule(context.device, shader, nullptr);
+                }
+            } submission { context, output.clone(), readback.clone() };
+            auto&                    d = context.device_dispatch;
+            VkShaderModuleCreateInfo shader { VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO };
+            shader.codeSize = sizeof(address_shader);
+            shader.pCode    = address_shader;
+            ASSERT_EQ(d.vkCreateShaderModule(context.device, &shader, nullptr, &submission.shader),
+                      VK_SUCCESS);
+            VkPushConstantRange range { VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(VkDeviceAddress) };
+            VkPipelineLayoutCreateInfo layout { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
+            layout.pushConstantRangeCount = 1;
+            layout.pPushConstantRanges    = &range;
+            ASSERT_EQ(
+                d.vkCreatePipelineLayout(context.device, &layout, nullptr, &submission.layout),
+                VK_SUCCESS);
+            VkComputePipelineCreateInfo pipeline { VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO };
+            pipeline.stage  = { VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+                                nullptr,
+                                0,
+                                VK_SHADER_STAGE_COMPUTE_BIT,
+                                submission.shader,
+                                "main",
+                                nullptr };
+            pipeline.layout = submission.layout;
+            ASSERT_EQ(
+                d.vkCreateComputePipelines(
+                    context.device, VK_NULL_HANDLE, 1, &pipeline, nullptr, &submission.pipeline),
+                VK_SUCCESS);
+            submission.command = context.begin();
+            ASSERT_NE(submission.command, VK_NULL_HANDLE);
+            d.vkCmdBindPipeline(
+                submission.command, VK_PIPELINE_BIND_POINT_COMPUTE, submission.pipeline);
+            d.vkCmdPushConstants(submission.command,
+                                 submission.layout,
+                                 VK_SHADER_STAGE_COMPUTE_BIT,
+                                 0,
+                                 sizeof(address),
+                                 &address);
+            d.vkCmdDispatch(submission.command, 1, 1, 1);
+            VkBufferMemoryBarrier barrier { VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER };
+            barrier.srcAccessMask       = VK_ACCESS_SHADER_WRITE_BIT;
+            barrier.dstAccessMask       = VK_ACCESS_TRANSFER_READ_BIT;
+            barrier.srcQueueFamilyIndex = barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barrier.buffer                                            = output.handle();
+            barrier.size                                              = VK_WHOLE_SIZE;
+            d.vkCmdPipelineBarrier(submission.command,
+                                   VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                                   VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                   0,
+                                   0,
+                                   nullptr,
+                                   1,
+                                   &barrier,
+                                   0,
+                                   nullptr);
+            VkBufferCopy copy { 0, 0, 256 };
+            d.vkCmdCopyBuffer(submission.command, output.handle(), readback.handle(), 1, &copy);
+            TransferBarrier(d,
+                            submission.command,
+                            readback.handle(),
+                            VK_ACCESS_HOST_READ_BIT,
+                            VK_PIPELINE_STAGE_HOST_BIT);
+            submission.fence = context.submit(submission.command);
+            ASSERT_NE(submission.fence, VK_NULL_HANDLE);
+            output.reset();
+            EXPECT_EQ(submission.output.device_address().unwrap_unchecked(), address);
+            submission.completed = context.wait(submission.fence);
+            ASSERT_TRUE(submission.completed);
+            auto memory = readback.allocation();
+            auto mapped = memory.map();
+            ASSERT_TRUE(mapped.is_ok());
+            auto mapping = mapped.unwrap_unchecked();
+            ASSERT_TRUE(memory.invalidate().is_ok());
+            auto* values = static_cast<const unsigned*>(mapping.data());
+            for (unsigned i = 0; i < 64; ++i) EXPECT_EQ(values[i], i * 17 + 9);
+        }
+    }
+    EXPECT_EQ(context.errors, 0u);
+}
+} // namespace
+TEST(MemoryVulkan, BufferAddressCoreShaderReadback) {
+    CheckBufferAddressShader(VK_API_VERSION_1_2);
+}
+TEST(MemoryVulkan, BufferAddressExtensionShaderReadback) {
+    CheckBufferAddressShader(VK_API_VERSION_1_1);
 }

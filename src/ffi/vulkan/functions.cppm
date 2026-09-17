@@ -188,6 +188,7 @@ export {
     using ::PFN_vkFreeCommandBuffers;
     using ::PFN_vkFreeDescriptorSets;
     using ::PFN_vkFreeMemory;
+    using ::PFN_vkGetBufferDeviceAddress;
     using ::PFN_vkGetBufferMemoryRequirements2;
     using ::PFN_vkGetDeviceProcAddr;
     using ::PFN_vkGetDeviceQueue;
