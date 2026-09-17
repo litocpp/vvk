@@ -268,7 +268,7 @@ TEST(MemoryVulkan, UploadSlicesAndSubmissionLifetime) {
     ASSERT_TRUE(initialized) << "Vulkan test context creation failed";
     {
         auto allocator_result = vvk::MemoryAllocator::Create(
-            context.gpu, context.instance_dispatch, context.device_dispatch, 1024 * 1024);
+            context.gpu, context.instance_dispatch, context.device_dispatch);
         ASSERT_TRUE(allocator_result.is_ok());
         auto allocator = allocator_result.unwrap_unchecked();
         auto host      = vvk::MemoryRequest { .required           = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
@@ -359,7 +359,7 @@ TEST(MemoryVulkan, UploadSlicesAndSubmissionLifetime) {
 namespace
 {
 void CheckImageTransfer(VkImageCreateFlags flags, bool format_list = false,
-                        unsigned api = VK_API_VERSION_1_1) {
+                        unsigned api = VK_API_VERSION_1_1, vvk::MemoryBlockPolicy policy = {}) {
     VulkanMemoryTest context;
     const bool       initialized = context.initialize(api, format_list && api < VK_API_VERSION_1_2);
     if (context.unavailable)
@@ -368,7 +368,7 @@ void CheckImageTransfer(VkImageCreateFlags flags, bool format_list = false,
     ASSERT_TRUE(initialized) << "Vulkan test context creation failed";
     {
         auto allocator_result = vvk::MemoryAllocator::Create(
-            context.gpu, context.instance_dispatch, context.device_dispatch, 1024 * 1024);
+            context.gpu, context.instance_dispatch, context.device_dispatch, policy);
         ASSERT_TRUE(allocator_result.is_ok());
         auto              allocator = allocator_result.unwrap_unchecked();
         VkImageCreateInfo image_info { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
@@ -590,7 +590,7 @@ TEST(MemoryVulkan, RepeatedReuseAndBudget) {
     ASSERT_TRUE(initialized) << "Vulkan test context creation failed";
     {
         auto result = vvk::MemoryAllocator::Create(
-            context.gpu, context.instance_dispatch, context.device_dispatch, 1024 * 1024);
+            context.gpu, context.instance_dispatch, context.device_dispatch);
         ASSERT_TRUE(result.is_ok());
         auto allocator = result.unwrap_unchecked();
         for (unsigned iteration = 0; iteration < 100; ++iteration) {
@@ -632,7 +632,7 @@ TEST(MemoryVulkan, RingUploadWrapAndSubmissionLifetime) {
         const VkDeviceSize unit             = atom > 256 ? atom : 256;
         const VkDeviceSize capacity         = unit * 4;
         auto               allocator_result = vvk::MemoryAllocator::Create(
-            context.gpu, context.instance_dispatch, context.device_dispatch, 1024 * 1024);
+            context.gpu, context.instance_dispatch, context.device_dispatch);
         ASSERT_TRUE(allocator_result.is_ok());
         auto allocator = allocator_result.unwrap_unchecked();
         auto host      = vvk::MemoryRequest { .required           = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
@@ -798,6 +798,52 @@ TEST(MemoryVulkan, VmaRuntimeDispatchBuffer) {
                                     buffer),
                   VK_SUCCESS);
         EXPECT_TRUE(bool(buffer));
+    }
+    EXPECT_EQ(context.errors, 0u);
+}
+
+TEST(MemoryVulkan, GrowingAllocatorImageReadback) {
+    CheckImageTransfer(
+        VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT, false, VK_API_VERSION_1_1, { 4096, 65536, 3, true });
+}
+
+TEST(MemoryVulkan, GrowingAllocatorChurnAndTrim) {
+    VulkanMemoryTest context;
+    const bool       initialized = context.initialize();
+    if (context.unavailable)
+        GTEST_SKIP() << "No Vulkan loader, ICD, or Vulkan 1.1 graphics device available";
+    ASSERT_TRUE(initialized);
+    {
+        auto made = vvk::MemoryAllocator::Create(context.gpu,
+                                                 context.instance_dispatch,
+                                                 context.device_dispatch,
+                                                 { 4096, 65536, 3, true });
+        ASSERT_TRUE(made.is_ok());
+        auto                 allocator = made.unwrap_unchecked();
+        vvk::AllocatedBuffer slots[16];
+        for (unsigned i = 0; i < 256; ++i) {
+            auto& slot = slots[(i * 7) % 16];
+            slot.reset();
+            auto made_buffer = allocator.create_buffer(
+                BufferCreate(4096 + (i % 5) * 512, VK_BUFFER_USAGE_TRANSFER_SRC_BIT),
+                { .required = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT });
+            ASSERT_TRUE(made_buffer.is_ok());
+            slot        = made_buffer.unwrap_unchecked();
+            auto memory = slot.allocation();
+            auto mapped = memory.map();
+            ASSERT_TRUE(mapped.is_ok());
+            auto mapping = mapped.unwrap_unchecked();
+            std::memset(mapping.data(), int(i & 255), 4096);
+            ASSERT_TRUE(memory.flush().is_ok());
+        }
+        for (auto& slot : slots) slot.reset();
+        allocator.trim();
+        const auto snapshot = allocator.budget();
+        for (unsigned h = 0; h < snapshot.heap_count; ++h) {
+            EXPECT_EQ(snapshot.heaps[h].allocation_count, 0u);
+            EXPECT_EQ(snapshot.heaps[h].block_count, 0u);
+            EXPECT_EQ(snapshot.heaps[h].block_bytes, 0u);
+        }
     }
     EXPECT_EQ(context.errors, 0u);
 }

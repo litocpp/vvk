@@ -28,8 +28,19 @@ struct FakeMemory {
         flushes {}, invalidates {};
     bool fail_create {}, fail_allocate {}, fail_bind {}, fail_map {}, dedicated {},
         prefer_dedicated {}, reject_device {};
-    bool                driver_budget {}, device_lost {};
-    VkDeviceSize        budget { 8192 };
+    bool         driver_budget {}, device_lost {};
+    VkDeviceSize budget { 8192 };
+    VkDeviceSize heap_size { 1024 * 1024 }, max_allocation_size { 8192 }, max_success_size { 8192 };
+    VkDeviceSize driver_usage { 256 }, atom { 64 }, requirement_size {};
+    unsigned     max_allocations { 128 }, budget_queries {};
+    bool         reject_shared {}, reject_dedicated {};
+    VkResult     allocation_error { VK_SUCCESS };
+    struct Attempt {
+        VkDeviceSize size;
+        unsigned     type;
+        bool         dedicated;
+    } attempts[256] {};
+    unsigned            attempt_count {};
     VkMappedMemoryRange last_range {};
     VkImageCreateFlags  image_flags {};
     const void*         image_chain {};
@@ -45,30 +56,45 @@ unsigned index(T value) {
 VKAPI_ATTR void VKAPI_CALL Properties(VkPhysicalDevice, VkPhysicalDeviceProperties* p) {
     *p                                 = {};
     p->apiVersion                      = VK_API_VERSION_1_1;
-    p->limits.nonCoherentAtomSize      = 64;
+    p->limits.nonCoherentAtomSize      = fake->atom;
     p->limits.bufferImageGranularity   = 256;
-    p->limits.maxMemoryAllocationCount = 128;
+    p->limits.maxMemoryAllocationCount = fake->max_allocations;
+}
+VKAPI_ATTR void VKAPI_CALL Properties2(VkPhysicalDevice gpu, VkPhysicalDeviceProperties2* p) {
+    Properties(gpu, &p->properties);
+    auto* limits = static_cast<VkPhysicalDeviceMaintenance3Properties*>(p->pNext);
+    EXPECT_EQ(limits->sType, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_3_PROPERTIES);
+    limits->maxMemoryAllocationSize = fake->max_allocation_size;
 }
 VKAPI_ATTR void VKAPI_CALL MemoryProperties(VkPhysicalDevice,
                                             VkPhysicalDeviceMemoryProperties2* p) {
     p->memoryProperties                     = {};
     p->memoryProperties.memoryHeapCount     = 1;
-    p->memoryProperties.memoryHeaps[0].size = 1024 * 1024;
+    p->memoryProperties.memoryHeaps[0].size = fake->heap_size;
     p->memoryProperties.memoryTypeCount     = 2;
     p->memoryProperties.memoryTypes[0]      = { VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, 0 };
     p->memoryProperties.memoryTypes[1]      = { VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 0 };
     if (p->pNext) {
+        ++fake->budget_queries;
         auto* b          = static_cast<VkPhysicalDeviceMemoryBudgetPropertiesEXT*>(p->pNext);
         b->heapBudget[0] = fake->driver_budget ? fake->budget : 0;
-        b->heapUsage[0]  = 256;
+        b->heapUsage[0]  = fake->driver_usage;
     }
 }
 VKAPI_ATTR VkResult VKAPI_CALL Allocate(VkDevice, const VkMemoryAllocateInfo*         info,
                                         const VkAllocationCallbacks*, VkDeviceMemory* out) {
+    const bool separate                   = info->pNext != nullptr;
+    fake->attempts[fake->attempt_count++] = { info->allocationSize,
+                                              info->memoryTypeIndex,
+                                              separate };
+    if (fake->allocation_error != VK_SUCCESS) return fake->allocation_error;
+    if ((separate && fake->reject_dedicated) || (! separate && fake->reject_shared) ||
+        info->allocationSize > fake->max_success_size)
+        return VK_ERROR_OUT_OF_DEVICE_MEMORY;
     if (fake->device_lost) return VK_ERROR_DEVICE_LOST;
     if (fake->fail_allocate || (fake->reject_device && info->memoryTypeIndex == 1))
         return VK_ERROR_OUT_OF_DEVICE_MEMORY;
-    EXPECT_LT(info->allocationSize, 8193u);
+
     auto i               = fake->next_block++;
     fake->blocks[i].live = true;
     fake->blocks[i].size = info->allocationSize;
@@ -131,7 +157,9 @@ void Requirements(VkMemoryRequirements2* req, VkDeviceSize size) {
 }
 VKAPI_ATTR void VKAPI_CALL BufferRequirements(VkDevice, const VkBufferMemoryRequirementsInfo2* info,
                                               VkMemoryRequirements2* req) {
-    Requirements(req, fake->buffers[index(info->buffer)].size);
+    Requirements(req,
+                 fake->requirement_size ? fake->requirement_size
+                                        : fake->buffers[index(info->buffer)].size);
 }
 VKAPI_ATTR void VKAPI_CALL ImageRequirements(VkDevice, const VkImageMemoryRequirementsInfo2*,
                                              VkMemoryRequirements2* req) {
@@ -155,6 +183,7 @@ VKAPI_ATTR VkResult VKAPI_CALL Map(VkDevice, VkDeviceMemory memory, VkDeviceSize
                                    VkDeviceSize, VkMemoryMapFlags, void**        out) {
     if (fake->fail_map) return VK_ERROR_MEMORY_MAP_FAILED;
     auto& b = fake->blocks[index(memory)];
+    if (b.size > sizeof(b.data)) return VK_ERROR_MEMORY_MAP_FAILED;
     EXPECT_EQ(b.maps, 0u);
     ++b.maps;
     ++fake->maps;
@@ -180,27 +209,30 @@ VKAPI_ATTR VkResult VKAPI_CALL Invalidate(VkDevice, unsigned count,
     ++fake->invalidates;
     return VK_SUCCESS;
 }
-auto MakeAllocator(vvk::MemoryMetadata metadata    = alloc::allocator_ref(alloc::GLOBAL),
-                   bool                format_list = false) {
-    vvk::MemoryDispatch dispatch { Properties,
-                                   MemoryProperties,
-                                   Allocate,
-                                   Free,
-                                   CreateBuffer,
-                                   DestroyBuffer,
-                                   CreateImage,
-                                   DestroyImage,
-                                   BufferRequirements,
-                                   ImageRequirements,
-                                   BindBuffer,
-                                   BindImage,
-                                   Map,
-                                   Unmap,
-                                   Flush,
-                                   Invalidate };
-    return vvk::MemoryAllocator::Create(
-        { handle<VkPhysicalDevice>(1), handle<VkDevice>(1), 1024, true, dispatch, format_list },
-        metadata);
+auto MakeAllocator(vvk::MemoryMetadata    metadata    = alloc::allocator_ref(alloc::GLOBAL),
+                   bool                   format_list = false,
+                   vvk::MemoryBlockPolicy policy      = { 1024, 1024, 0, false }) {
+    vvk::MemoryDispatch            dispatch { Properties,
+                                              MemoryProperties,
+                                              Allocate,
+                                              Free,
+                                              CreateBuffer,
+                                              DestroyBuffer,
+                                              CreateImage,
+                                              DestroyImage,
+                                              BufferRequirements,
+                                              ImageRequirements,
+                                              BindBuffer,
+                                              BindImage,
+                                              Map,
+                                              Unmap,
+                                              Flush,
+                                              Invalidate,
+                                              Properties2 };
+    vvk::MemoryAllocatorCreateInfo info {
+        handle<VkPhysicalDevice>(1), handle<VkDevice>(1), policy, true, dispatch, format_list
+    };
+    return vvk::MemoryAllocator::Create(info, metadata);
 }
 auto BufferInfo(VkDeviceSize size = 73) -> VkBufferCreateInfo {
     return {
@@ -665,4 +697,368 @@ TEST(Memory, CompatibleImageFailureRollback) {
         EXPECT_EQ(fake->allocations, fake->frees);
     }
     EXPECT_TRUE(succeeded);
+}
+
+TEST(Memory, GrowingBlocksAndTrim) {
+    FakeMemory context;
+    fake = &context;
+    auto allocator =
+        MakeAllocator(alloc::allocator_ref(alloc::GLOBAL), false, { 256, 1024, 3, true })
+            .unwrap_unchecked();
+    vvk::AllocatedBuffer buffers[10];
+    for (auto& buffer : buffers) {
+        auto result = allocator.create_buffer(BufferInfo(256));
+        ASSERT_TRUE(result.is_ok());
+        buffer = result.unwrap_unchecked();
+    }
+    ASSERT_EQ(fake->attempt_count, 4u);
+    EXPECT_EQ(fake->attempts[0].size, 256u);
+    EXPECT_EQ(fake->attempts[1].size, 512u);
+    EXPECT_EQ(fake->attempts[2].size, 1024u);
+    EXPECT_EQ(fake->attempts[3].size, 1024u);
+    EXPECT_EQ(allocator.budget().heaps[0].allocation_count, 10u);
+    for (auto& buffer : buffers) buffer.reset();
+    EXPECT_EQ(allocator.budget().heaps[0].block_count, 1u);
+    allocator.trim();
+    EXPECT_EQ(fake->allocations, fake->frees);
+    auto fresh = allocator.create_buffer(BufferInfo(256));
+    ASSERT_TRUE(fresh.is_ok());
+    EXPECT_EQ(fake->attempts[4].size, 256u);
+}
+
+TEST(Memory, ShrinkAndDedicatedFallbackOrder) {
+    for (unsigned mode = 0; mode < 5; ++mode) {
+        FakeMemory context;
+        fake                   = &context;
+        fake->max_success_size = mode == 0 ? 256 : 8192;
+        fake->reject_shared    = mode == 1;
+        fake->reject_dedicated = mode >= 2;
+        fake->prefer_dedicated = mode == 2;
+        const auto policy      = vvk::MemoryBlockPolicy { 1024, 1024, mode == 0 ? 3u : 0u, true };
+        auto       allocator =
+            MakeAllocator(alloc::allocator_ref(alloc::GLOBAL), false, policy).unwrap_unchecked();
+        auto result =
+            allocator.create_buffer(BufferInfo(mode == 3 ? 600 : 128), { .dedicated = mode == 4 });
+        if (mode == 4) {
+            ASSERT_TRUE(result.is_err());
+            EXPECT_EQ(fake->attempt_count, 2u);
+            EXPECT_TRUE(fake->attempts[0].dedicated);
+            EXPECT_TRUE(fake->attempts[1].dedicated);
+            EXPECT_NE(fake->attempts[0].type, fake->attempts[1].type);
+        } else {
+            ASSERT_TRUE(result.is_ok());
+            auto buffer = result.unwrap_unchecked();
+            EXPECT_EQ(buffer.allocation().info().memory_type, 1u);
+            EXPECT_EQ(buffer.allocation().info().dedicated, mode == 1);
+            if (mode == 0) {
+                ASSERT_EQ(fake->attempt_count, 3u);
+                EXPECT_EQ(fake->attempts[0].size, 1024u);
+                EXPECT_EQ(fake->attempts[1].size, 512u);
+                EXPECT_EQ(fake->attempts[2].size, 256u);
+            } else {
+                ASSERT_EQ(fake->attempt_count, 2u);
+                EXPECT_EQ(fake->attempts[0].dedicated, mode != 1);
+                EXPECT_EQ(fake->attempts[1].dedicated, mode == 1);
+                EXPECT_EQ(fake->attempts[0].type, fake->attempts[1].type);
+            }
+        }
+        EXPECT_EQ(fake->queries, 1u);
+    }
+    FakeMemory context;
+    fake                   = &context;
+    fake->dedicated        = true;
+    fake->reject_dedicated = true;
+    auto allocator =
+        MakeAllocator(alloc::allocator_ref(alloc::GLOBAL), false, { 256, 1024, 3, true })
+            .unwrap_unchecked();
+    auto result = allocator.create_image(ImageInfo());
+    ASSERT_TRUE(result.is_err());
+    EXPECT_EQ(fake->attempt_count, 2u);
+    EXPECT_TRUE(fake->attempts[0].dedicated);
+    EXPECT_TRUE(fake->attempts[1].dedicated);
+}
+
+TEST(Memory, BudgetChargesPhysicalBlocksAndRefreshes) {
+    FakeMemory context;
+    fake                = &context;
+    fake->driver_budget = true;
+    fake->budget        = 600;
+    fake->driver_usage  = 256;
+    auto allocator =
+        MakeAllocator(alloc::allocator_ref(alloc::GLOBAL), false, { 1024, 1024, 3, true })
+            .unwrap_unchecked();
+    auto first = allocator.create_buffer(BufferInfo(128), { .within_budget = true });
+    ASSERT_TRUE(first.is_ok());
+    EXPECT_EQ(fake->attempt_count, 1u);
+    EXPECT_EQ(fake->attempts[0].size, 256u);
+    EXPECT_EQ(fake->budget_queries, 3u);
+    fake->driver_usage = 700;
+    auto second        = allocator.create_buffer(BufferInfo(128), { .within_budget = true });
+    ASSERT_TRUE(second.is_ok());
+    EXPECT_EQ(fake->attempt_count, 1u);
+    EXPECT_EQ(fake->budget_queries, 3u);
+    auto rejected = allocator.create_buffer(BufferInfo(128), { .within_budget = true });
+    ASSERT_TRUE(rejected.is_err());
+    EXPECT_EQ(fake->attempt_count, 1u);
+    EXPECT_GT(fake->budget_queries, 3u);
+    EXPECT_EQ(allocator.budget().heaps[0].allocation_count, 2u);
+}
+
+TEST(Memory, AllocationErrorsDoNotRetry) {
+    const VkResult errors[] { VK_ERROR_OUT_OF_HOST_MEMORY,
+                              VK_ERROR_DEVICE_LOST,
+                              VK_ERROR_TOO_MANY_OBJECTS,
+                              VK_ERROR_UNKNOWN };
+    for (auto error : errors) {
+        FakeMemory context;
+        fake                   = &context;
+        fake->allocation_error = error;
+        auto allocator =
+            MakeAllocator(alloc::allocator_ref(alloc::GLOBAL), false, { 1024, 1024, 3, true })
+                .unwrap_unchecked();
+        auto result = allocator.create_buffer(BufferInfo(128));
+        ASSERT_TRUE(result.is_err());
+        const auto detail = result.unwrap_err_unchecked();
+        EXPECT_EQ(detail.api_result, error);
+        EXPECT_EQ(detail.device_allocation_attempts, 1u);
+        EXPECT_EQ(detail.memory_type, 1u);
+        EXPECT_EQ(detail.allocation_size, 1024u);
+        EXPECT_FALSE(detail.dedicated);
+        EXPECT_EQ(fake->attempt_count, 1u);
+        EXPECT_EQ(fake->creates, fake->destroys);
+    }
+}
+
+TEST(Memory, PolicyLimitsAndExhaustion) {
+    FakeMemory context;
+    fake = &context;
+    const vvk::MemoryBlockPolicy invalid[] {
+        { 0, 0 }, { 0, 1024 }, { 1024, 0 }, { 1024, 256 }, { 1, 1, 64 }
+    };
+    for (auto policy : invalid) {
+        auto result = MakeAllocator(alloc::allocator_ref(alloc::GLOBAL), false, policy);
+        ASSERT_TRUE(result.is_err());
+        EXPECT_EQ(result.unwrap_err_unchecked().kind, vvk::MemoryErrorKind::InvalidRequest);
+    }
+    fake->max_allocation_size = 256;
+    fake->heap_size           = 512;
+    auto allocator =
+        MakeAllocator(alloc::allocator_ref(alloc::GLOBAL), false, { 1024, 2048, 3, false })
+            .unwrap_unchecked();
+    auto result = allocator.create_buffer(BufferInfo(128));
+    ASSERT_TRUE(result.is_ok());
+    EXPECT_EQ(fake->attempt_count, 1u);
+    EXPECT_EQ(fake->attempts[0].size, 256u);
+    fake->fail_allocate = true;
+    auto failed         = allocator.create_buffer(BufferInfo(256));
+    ASSERT_TRUE(failed.is_err());
+    EXPECT_EQ(failed.unwrap_err_unchecked().device_allocation_attempts, 2u);
+    EXPECT_EQ(fake->attempt_count, 3u);
+    EXPECT_EQ(fake->attempts[1].type, 1u);
+    EXPECT_EQ(fake->attempts[2].type, 0u);
+    EXPECT_EQ(allocator.budget().heaps[0].allocation_count, 1u);
+}
+
+TEST(Memory, GrowthSaturatesAndAtomOverflowStops) {
+    {
+        FakeMemory context;
+        fake            = &context;
+        fake->heap_size = fake->max_allocation_size = fake->max_success_size = ~VkDeviceSize(0);
+        const auto initial     = VkDeviceSize(1) << 63;
+        auto       allocator   = MakeAllocator(alloc::allocator_ref(alloc::GLOBAL),
+                                               false,
+                                               { initial, ~VkDeviceSize(0), 0, false })
+                                     .unwrap_unchecked();
+        fake->requirement_size = initial - 1;
+        auto large             = allocator.create_buffer(BufferInfo());
+        ASSERT_TRUE(large.is_ok());
+        fake->requirement_size = 0;
+        fake->allocation_error = VK_ERROR_DEVICE_LOST;
+        auto failed            = allocator.create_buffer(BufferInfo());
+        ASSERT_TRUE(failed.is_err());
+        ASSERT_EQ(fake->attempt_count, 2u);
+        EXPECT_EQ(fake->attempts[0].size, initial);
+        EXPECT_EQ(fake->attempts[1].size, ~VkDeviceSize(0));
+        EXPECT_EQ(failed.unwrap_err_unchecked().api_result, VK_ERROR_DEVICE_LOST);
+    }
+    {
+        FakeMemory context;
+        fake                   = &context;
+        fake->requirement_size = ~VkDeviceSize(0);
+        auto allocator =
+            MakeAllocator(alloc::allocator_ref(alloc::GLOBAL), false, { 256, 1024, 3, true })
+                .unwrap_unchecked();
+        auto result = allocator.create_buffer(BufferInfo(),
+                                              { .required = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT });
+        ASSERT_TRUE(result.is_err());
+        EXPECT_EQ(result.unwrap_err_unchecked().kind, vvk::MemoryErrorKind::InvalidRequest);
+        EXPECT_EQ(fake->attempt_count, 0u);
+    }
+}
+
+TEST(Memory, AllocationCountAndEstimatedBudget) {
+    for (unsigned mode = 0; mode < 2; ++mode) {
+        FakeMemory context;
+        fake                  = &context;
+        fake->max_allocations = mode == 0 ? 1 : 128;
+        fake->heap_size       = 512;
+        auto allocator =
+            MakeAllocator(alloc::allocator_ref(alloc::GLOBAL), false, { 512, 512, 0, false })
+                .unwrap_unchecked();
+        auto first = allocator.create_buffer(BufferInfo(256), { .within_budget = true });
+        ASSERT_TRUE(first.is_ok());
+        auto second = allocator.create_buffer(BufferInfo(256), { .within_budget = true });
+        ASSERT_TRUE(second.is_ok());
+        auto failed = allocator.create_buffer(BufferInfo(256), { .within_budget = true });
+        ASSERT_TRUE(failed.is_err());
+        EXPECT_EQ(fake->attempt_count, 1u);
+        EXPECT_EQ(failed.unwrap_err_unchecked().device_allocation_attempts, 0u);
+        EXPECT_EQ(failed.unwrap_err_unchecked().api_result,
+                  mode == 0 ? VK_ERROR_TOO_MANY_OBJECTS : VK_ERROR_OUT_OF_DEVICE_MEMORY);
+        auto heap = allocator.budget().heaps[0];
+        EXPECT_EQ(heap.source, vvk::MemoryBudgetSource::AllocatorEstimate);
+        EXPECT_EQ(heap.block_bytes, 512u);
+        EXPECT_EQ(heap.allocation_count, 2u);
+    }
+}
+
+TEST(Memory, PolicyMetadataMappingAndBindingRollback) {
+    bool succeeded = false;
+    for (int failure = 0; failure < 24; ++failure) {
+        FakeMemory context;
+        fake = &context;
+        MemoryFailMetadata metadata { failure < 2 ? -1 : failure - 2 };
+        {
+            auto made =
+                MakeAllocator(alloc::allocator_ref(metadata), false, { 256, 1024, 3, true });
+            if (made.is_ok()) {
+                auto allocator  = made.unwrap_unchecked();
+                fake->fail_bind = failure == 0;
+                fake->fail_map  = failure == 1;
+                {
+                    auto result =
+                        allocator.create_buffer(BufferInfo(73), { .persistent_mapping = true });
+                    succeeded |= result.is_ok();
+                    if (failure < 2) {
+                        EXPECT_TRUE(result.is_err());
+                    }
+                    EXPECT_LE(fake->attempt_count, 1u);
+                }
+                EXPECT_EQ(allocator.budget().heaps[0].allocation_count, 0u);
+            }
+        }
+        EXPECT_EQ(metadata.live, 0);
+        EXPECT_EQ(fake->creates, fake->destroys);
+        EXPECT_EQ(fake->allocations, fake->frees);
+        EXPECT_EQ(fake->maps, fake->unmaps);
+    }
+    EXPECT_TRUE(succeeded);
+}
+
+TEST(Memory, ShrinkBoundsAndAtomPadding) {
+    {
+        FakeMemory context;
+        fake                   = &context;
+        fake->max_success_size = 128;
+        auto allocator =
+            MakeAllocator(alloc::allocator_ref(alloc::GLOBAL), false, { 1000, 1000, 63, false })
+                .unwrap_unchecked();
+        auto result = allocator.create_buffer(BufferInfo(73),
+                                              { .required = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT });
+        ASSERT_TRUE(result.is_ok());
+        ASSERT_EQ(fake->attempt_count, 4u);
+        EXPECT_EQ(fake->attempts[0].size, 1000u);
+        EXPECT_EQ(fake->attempts[1].size, 500u);
+        EXPECT_EQ(fake->attempts[2].size, 250u);
+        EXPECT_EQ(fake->attempts[3].size, 128u);
+        auto buffer = result.unwrap_unchecked();
+        EXPECT_EQ(buffer.allocation().info().occupied_size, 128u);
+    }
+    {
+        FakeMemory context;
+        fake                = &context;
+        fake->fail_allocate = true;
+        auto allocator =
+            MakeAllocator(alloc::allocator_ref(alloc::GLOBAL), false, { 1024, 1024, 2, true })
+                .unwrap_unchecked();
+        auto result = allocator.create_buffer(BufferInfo(73));
+        ASSERT_TRUE(result.is_err());
+        ASSERT_EQ(fake->attempt_count, 8u);
+        EXPECT_EQ(result.unwrap_err_unchecked().device_allocation_attempts, 8u);
+        for (unsigned i = 0; i < 8; ++i) {
+            EXPECT_EQ(fake->attempts[i].type, i < 4 ? 1u : 0u);
+            EXPECT_EQ(fake->attempts[i].dedicated, i % 4 == 3);
+            EXPECT_EQ(fake->attempts[i].size, i % 4 == 3 ? 73u : 1024u >> (i % 4));
+        }
+        EXPECT_EQ(fake->allocations, 0u);
+        EXPECT_EQ(fake->creates, fake->destroys);
+    }
+}
+
+TEST(Memory, DedicatedPreferenceReusesSharedUnderBudgetPressure) {
+    FakeMemory context;
+    fake = &context;
+    auto allocator =
+        MakeAllocator(alloc::allocator_ref(alloc::GLOBAL), false, { 256, 1024, 3, true })
+            .unwrap_unchecked();
+    auto first = allocator.create_buffer(BufferInfo(128));
+    ASSERT_TRUE(first.is_ok());
+    fake->driver_budget    = true;
+    fake->budget           = 1;
+    fake->prefer_dedicated = true;
+    auto second            = allocator.create_buffer(BufferInfo(128), { .within_budget = true });
+    ASSERT_TRUE(second.is_ok());
+    auto buffer = second.unwrap_unchecked();
+    EXPECT_FALSE(buffer.allocation().info().dedicated);
+    EXPECT_EQ(fake->attempt_count, 1u);
+    EXPECT_EQ(allocator.budget().heaps[0].allocation_count, 2u);
+}
+
+TEST(Memory, DefaultPolicyGrowthAndRecovery) {
+    constexpr VkDeviceSize mib = 1024 * 1024;
+    for (unsigned mode = 0; mode < 4; ++mode) {
+        FakeMemory context;
+        fake            = &context;
+        fake->heap_size = fake->max_allocation_size = fake->max_success_size = 64 * mib;
+        fake->max_success_size = mode == 1 ? mib : 64 * mib;
+        fake->reject_shared    = mode == 2;
+        fake->reject_dedicated = mode == 3;
+        fake->prefer_dedicated = mode == 3;
+        {
+            auto allocator =
+                MakeAllocator(alloc::allocator_ref(alloc::GLOBAL), false, {}).unwrap_unchecked();
+            vvk::AllocatedBuffer buffers[13];
+            const unsigned       count = mode == 0 ? 13 : 1;
+            for (unsigned i = 0; i < count; ++i) {
+                auto result = allocator.create_buffer(BufferInfo(mib));
+                ASSERT_TRUE(result.is_ok());
+                buffers[i] = result.unwrap_unchecked();
+                EXPECT_EQ(buffers[i].allocation().info().memory_type, 1u);
+                EXPECT_EQ(buffers[i].allocation().info().dedicated, mode == 2);
+            }
+            if (mode == 0) {
+                ASSERT_EQ(fake->attempt_count, 3u);
+                EXPECT_EQ(fake->attempts[0].size, 4 * mib);
+                EXPECT_EQ(fake->attempts[1].size, 8 * mib);
+                EXPECT_EQ(fake->attempts[2].size, 16 * mib);
+            } else if (mode == 1) {
+                ASSERT_EQ(fake->attempt_count, 3u);
+                EXPECT_EQ(fake->attempts[0].size, 4 * mib);
+                EXPECT_EQ(fake->attempts[1].size, 2 * mib);
+                EXPECT_EQ(fake->attempts[2].size, mib);
+            } else if (mode == 2) {
+                ASSERT_EQ(fake->attempt_count, 4u);
+                EXPECT_EQ(fake->attempts[2].size, mib);
+                EXPECT_TRUE(fake->attempts[3].dedicated);
+                EXPECT_EQ(fake->attempts[3].size, mib);
+            } else {
+                ASSERT_EQ(fake->attempt_count, 2u);
+                EXPECT_TRUE(fake->attempts[0].dedicated);
+                EXPECT_FALSE(fake->attempts[1].dedicated);
+            }
+            EXPECT_EQ(fake->queries, count);
+        }
+        EXPECT_EQ(fake->allocations, fake->frees);
+        EXPECT_EQ(fake->creates, fake->destroys);
+    }
 }
