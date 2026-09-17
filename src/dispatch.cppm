@@ -156,6 +156,8 @@ struct DeviceDispatch : InstanceDispatch {
     PFN_vkGetPipelineExecutableStatisticsKHR     vkGetPipelineExecutableStatisticsKHR {};
     PFN_vkGetQueryPoolResults                    vkGetQueryPoolResults {};
     PFN_vkGetSemaphoreCounterValueKHR            vkGetSemaphoreCounterValueKHR {};
+    PFN_vkFlushMappedMemoryRanges                vkFlushMappedMemoryRanges {};
+    PFN_vkInvalidateMappedMemoryRanges           vkInvalidateMappedMemoryRanges {};
     PFN_vkMapMemory                              vkMapMemory {};
     PFN_vkQueueSubmit                            vkQueueSubmit {};
     PFN_vkResetFences                            vkResetFences {};

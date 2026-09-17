@@ -38,3 +38,10 @@ cache = {
   VMA_ENABLE_INSTALL = true,
 }
 targets = [{ name = "GPUOpen::VulkanMemoryAllocator", pub = true }]
+
+[[test]]
+name = "vvk-memory-tests"
+sources = ["tests/main.cpp", "tests/memory.cpp", "tests/memory_vulkan.cpp", "tests/memory_import.cpp"]
+
+[dev-dependencies]
+rstd-test = { version = "0.1.0" }

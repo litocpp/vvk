@@ -234,3 +234,10 @@ export {
     using ::PFN_vkWaitForFences;
     using ::PFN_vkWaitSemaphoresKHR;
 }
+
+export {
+    using ::PFN_vkFlushMappedMemoryRanges;
+    using ::PFN_vkInvalidateMappedMemoryRanges;
+    using ::vkFlushMappedMemoryRanges;
+    using ::vkInvalidateMappedMemoryRanges;
+}

@@ -481,3 +481,12 @@ export {
     using ::VK_SUCCESS;
     using ::VK_VERTEX_INPUT_RATE_VERTEX;
 }
+
+export {
+    using ::VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
+    using ::VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS;
+    using ::VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT;
+    using ::VkMappedMemoryRange;
+    using ::VkMemoryDedicatedRequirements;
+    using ::VkPhysicalDeviceMemoryBudgetPropertiesEXT;
+}

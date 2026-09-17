@@ -194,6 +194,9 @@ public:
     GetImageMemoryRequirements2(const VkImageMemoryRequirementsInfo2& info,
                                 void* next_structures = nullptr) const noexcept;
     VkMemoryRequirements GetBufferMemoryRequirements(VkBuffer buffer) const noexcept;
+    VkMemoryRequirements2
+    GetBufferMemoryRequirements2(const VkBufferMemoryRequirementsInfo2& info,
+                                 void* next_structures = nullptr) const noexcept;
 
     VkSubresourceLayout
     GetImageSubresourceLayout(VkImage image, const VkImageSubresource& subresource) const noexcept;

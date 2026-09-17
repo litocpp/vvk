@@ -170,6 +170,8 @@ bool Load(VkDevice device, DeviceDispatch& dld) noexcept {
     X(vkGetPipelineExecutableStatisticsKHR);
     X(vkGetSemaphoreCounterValueKHR);
     X(vkMapMemory);
+    X(vkFlushMappedMemoryRanges);
+    X(vkInvalidateMappedMemoryRanges);
     X(vkQueueSubmit);
     X(vkResetCommandBuffer);
     X(vkResetFences);
@@ -375,12 +377,18 @@ VkMemoryRequirements Device::GetBufferMemoryRequirements(VkBuffer buffer) const 
         .pNext  = nullptr,
         .buffer = buffer,
     };
+    return GetBufferMemoryRequirements2(info).memoryRequirements;
+}
+
+VkMemoryRequirements2
+Device::GetBufferMemoryRequirements2(const VkBufferMemoryRequirementsInfo2& info,
+                                     void* next_structures) const noexcept {
     VkMemoryRequirements2 requirements {
         .sType = VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2,
-        .pNext = nullptr,
+        .pNext = next_structures,
     };
     dld->vkGetBufferMemoryRequirements2(handle, &info, &requirements);
-    return requirements.memoryRequirements;
+    return requirements;
 }
 
 VkSubresourceLayout
