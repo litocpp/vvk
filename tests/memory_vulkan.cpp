@@ -1,11 +1,10 @@
-#include <vvk/ffi/vulkan_abi.hpp>
+#include <vulkan/vk_platform.h>
 #include <rstd/test/gtest.hpp>
-#include <cstdio>
-#include <cstring>
 #include "shaders/address.hpp"
 import rstd;
 import vvk;
 using namespace rstd::prelude;
+using namespace rstd::literals;
 
 namespace
 {
@@ -44,7 +43,7 @@ struct VulkanMemoryTest {
         auto* self = static_cast<VulkanMemoryTest*>(user);
         if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) {
             ++self->errors;
-            std::fprintf(stderr, "Vulkan validation: %s\n", data->pMessage);
+            rstd::io::eprint("Vulkan validation: {}\n", data->pMessage);
         }
         return VK_FALSE;
     }
@@ -54,7 +53,7 @@ struct VulkanMemoryTest {
         if (opened.is_err()) {
             auto error  = opened.unwrap_err_unchecked();
             unavailable = error.kind == vvk::LoaderErrorKind::OpenLibrary;
-            std::fprintf(stderr, "vvk loader failed: kind=%u\n", unsigned(error.kind));
+            rstd::io::eprint("vvk loader failed: kind={}\n", unsigned(error.kind));
             return false;
         }
         loader                 = Some(rstd::move(opened).unwrap_unchecked());
@@ -75,7 +74,9 @@ struct VulkanMemoryTest {
             VK_SUCCESS)
             return false;
         for (const auto& layer : layers)
-            if (std::strcmp(layer.layerName, "VK_LAYER_KHRONOS_validation") == 0) validation = true;
+            if ((rstd::ffi::CStr::from_ptr(layer.layerName).to_bytes() ==
+                 rstd::ffi::CStr::from_ptr("VK_LAYER_KHRONOS_validation").to_bytes()))
+                validation = true;
         const char*       layer_name = "VK_LAYER_KHRONOS_validation";
         const char*       extension  = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
         VkApplicationInfo application {
@@ -95,10 +96,9 @@ struct VulkanMemoryTest {
             auto error  = instance_result.unwrap_err_unchecked();
             unavailable = error.kind == vvk::DispatchErrorKind::Vulkan &&
                           error.api_result == VK_ERROR_INCOMPATIBLE_DRIVER;
-            std::fprintf(stderr,
-                         "vvk instance failed: command=%s, result=%d\n",
-                         error.command ? error.command : "configuration",
-                         error.api_result);
+            rstd::io::eprint("vvk instance failed: command={}, result={}\n",
+                             error.command ? error.command : "configuration",
+                             error.api_result);
             return false;
         }
         instance = *instance_owner;
@@ -173,7 +173,8 @@ struct VulkanMemoryTest {
                     gpu, nullptr, &count, extensions.as_mut_ptr().as_raw_ptr()) != VK_SUCCESS)
                 return false;
             for (const auto& extension : extensions) {
-                if (std::strcmp(extension.extensionName, name) == 0) {
+                if ((rstd::ffi::CStr::from_ptr(extension.extensionName).to_bytes() ==
+                     rstd::ffi::CStr::from_ptr(name).to_bytes())) {
                     enabled_extensions[enabled_count++] = name;
                     return true;
                 }
@@ -207,10 +208,9 @@ struct VulkanMemoryTest {
             vvk::Device::Create(device_owner, gpu, instance_dispatch, device_info, device_dispatch);
         if (created.is_err()) {
             auto error = created.unwrap_err_unchecked();
-            std::fprintf(stderr,
-                         "vvk device failed: command=%s, result=%d\n",
-                         error.command ? error.command : "configuration",
-                         error.api_result);
+            rstd::io::eprint("vvk device failed: command={}, result={}\n",
+                             error.command ? error.command : "configuration",
+                             error.api_result);
             return false;
         }
         device = *device_owner;
@@ -221,10 +221,10 @@ struct VulkanMemoryTest {
                                             family };
         if (device_dispatch.vkCreateCommandPool(device, &pool_info, nullptr, &pool) != VK_SUCCESS)
             return false;
-        std::printf("vvk device: %s; validation=%s; type=%u\n",
-                    properties.deviceName,
-                    validation ? "enabled" : "unavailable",
-                    unsigned(properties.deviceType));
+        rstd::io::print("vvk device: {}; validation={}; type={}\n",
+                        properties.deviceName,
+                        validation ? "enabled" : "unavailable",
+                        unsigned(properties.deviceType));
         return true;
     }
     VkCommandBuffer begin() {
@@ -311,7 +311,7 @@ TEST(MemoryVulkan, UploadSlicesAndSubmissionLifetime) {
         auto write_result = stage_memory.map();
         ASSERT_TRUE(write_result.is_ok());
         auto write = write_result.unwrap_unchecked();
-        std::memset(write.data(), 0, 4096);
+        rstd::mem::memset(write.data(), u8(0), usize(4096));
         alloc::RangeAllocator ranges(4096);
         const VkDeviceSize    atom          = context.properties.limits.nonCoherentAtomSize;
         const VkDeviceSize    alignment     = atom > 256 ? atom : 256;
@@ -366,8 +366,8 @@ TEST(MemoryVulkan, UploadSlicesAndSubmissionLifetime) {
         auto read_map = read_map_result.unwrap_unchecked();
         ASSERT_TRUE(read_memory.invalidate().is_ok());
         const auto* actual = static_cast<const unsigned char*>(read_map.data());
-        EXPECT_EQ(std::memcmp(actual + first.offset, bytes + first.offset, 256), 0);
-        EXPECT_EQ(std::memcmp(actual + second.offset, bytes + second.offset, 256), 0);
+        EXPECT_EQ(rstd::mem::memcmp(actual + first.offset, bytes + first.offset, usize(256)), 0);
+        EXPECT_EQ(rstd::mem::memcmp(actual + second.offset, bytes + second.offset, usize(256)), 0);
         ASSERT_TRUE(ranges.deallocate(first.id).is_ok());
         auto reused = ranges.allocate(256, alignment).unwrap_unchecked();
         EXPECT_EQ(reused.offset, first.offset);
@@ -469,14 +469,14 @@ void CheckImageTransfer(VkImageCreateFlags flags, bool format_list = false,
                       vvk::MemoryPlacementReason::AutomaticHost);
             EXPECT_EQ(readback_info.selection.placement_reason,
                       vvk::MemoryPlacementReason::AutomaticHost);
-            std::printf(
-                "vvk intent: upload type=%u heap=%u flags=%x; readback type=%u heap=%u flags=%x\n",
-                upload_info.memory_type,
-                upload_info.heap,
-                upload_info.properties,
-                readback_info.memory_type,
-                readback_info.heap,
-                readback_info.properties);
+            rstd::io::print("vvk intent: upload type={} heap={} flags={:x}; readback type={} "
+                            "heap={} flags={:x}\n",
+                            upload_info.memory_type,
+                            upload_info.heap,
+                            upload_info.properties,
+                            readback_info.memory_type,
+                            readback_info.heap,
+                            readback_info.properties);
         }
         auto write_result = stage_memory.map();
         ASSERT_TRUE(write_result.is_ok());
@@ -562,7 +562,7 @@ void CheckImageTransfer(VkImageCreateFlags flags, bool format_list = false,
         ASSERT_TRUE(mapped_result.is_ok());
         auto mapped = mapped_result.unwrap_unchecked();
         ASSERT_TRUE(read_memory.invalidate().is_ok());
-        EXPECT_EQ(std::memcmp(write.data(), mapped.data(), bytes_count), 0);
+        EXPECT_EQ(rstd::mem::memcmp(write.data(), mapped.data(), usize(bytes_count)), 0);
         if (! flags) {
             unsigned       attachments = 0;
             const VkFormat depth_formats[] { VK_FORMAT_D32_SFLOAT, VK_FORMAT_D16_UNORM };
@@ -600,9 +600,9 @@ void CheckImageTransfer(VkImageCreateFlags flags, bool format_list = false,
                 image_info.samples = VK_SAMPLE_COUNT_4_BIT;
                 auto msaa          = allocator.create_image(image_info);
                 ASSERT_TRUE(msaa.is_ok());
-                std::printf("vvk MSAA: 4x verified\n");
+                rstd::io::print("vvk MSAA: 4x verified\n");
             } else
-                std::printf("vvk MSAA: 4x unavailable, not covered\n");
+                rstd::io::print("vvk MSAA: 4x unavailable, not covered\n");
         }
     }
     EXPECT_EQ(context.errors, 0u);
@@ -657,8 +657,8 @@ TEST(MemoryVulkan, RepeatedReuseAndBudget) {
                 (memory.memoryTypes[i].propertyFlags &
                  (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) ==
                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
-        std::printf("vvk host non-coherent memory advertised: %s\n",
-                    non_coherent ? "yes" : "no; atom behavior covered by mock dispatch only");
+        rstd::io::print("vvk host non-coherent memory advertised: {}\n",
+                        non_coherent ? "yes" : "no; atom behavior covered by mock dispatch only");
     }
     EXPECT_EQ(context.errors, 0u);
 }
@@ -809,9 +809,9 @@ TEST(MemoryVulkan, RingUploadWrapAndSubmissionLifetime) {
         retire(3);
         EXPECT_TRUE(ranges.front().is_none());
         EXPECT_EQ(ranges.statistics().free_bytes, capacity);
-        std::printf("vvk ring: four submissions, tail padding=%llu, wrapped upload and byte "
-                    "readback verified\n",
-                    static_cast<unsigned long long>(unit));
+        rstd::io::print("vvk ring: four submissions, tail padding={}, wrapped upload and byte "
+                        "readback verified\n",
+                        static_cast<unsigned long long>(unit));
     }
     EXPECT_EQ(context.errors, 0u);
 }
@@ -847,7 +847,7 @@ TEST(MemoryVulkan, GrowingAllocatorChurnAndTrim) {
             auto mapped = memory.map();
             ASSERT_TRUE(mapped.is_ok());
             auto mapping = mapped.unwrap_unchecked();
-            std::memset(mapping.data(), int(i & 255), 4096);
+            rstd::mem::memset(mapping.data(), u8(i & 255), usize(4096));
             ASSERT_TRUE(memory.flush().is_ok());
         }
         for (auto& slot : slots) slot.reset();

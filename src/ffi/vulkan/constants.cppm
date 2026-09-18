@@ -2,32 +2,31 @@ module;
 
 #define VK_NO_PROTOTYPES
 #include <vulkan/vulkan.h>
-#include <cstdint>
 
 // Capture macros before #undef. Comprehensive Vulkan FFI module — covers
 // the symbol surface needed by vvk and its consumers. Macros that resist tokenisation are captured
 // in a hidden namespace, #undef'd, and re-exported as constexpr alternates.
 namespace _wv_vk
 {
-inline constexpr std::uint32_t ApiVersionVariant(std::uint32_t version) {
+inline constexpr uint32_t ApiVersionVariant(uint32_t version) {
     return VK_API_VERSION_VARIANT(version);
 }
 
-inline constexpr auto          k_VK_API_VERSION_1_0          = VK_API_VERSION_1_0;
-inline constexpr auto          k_VK_API_VERSION_1_2          = VK_API_VERSION_1_2;
-inline constexpr auto          k_VK_MAX_MEMORY_TYPES         = VK_MAX_MEMORY_TYPES;
-inline constexpr auto          k_VK_MAX_MEMORY_HEAPS         = VK_MAX_MEMORY_HEAPS;
-inline constexpr std::uint32_t k_VK_TRUE                     = VK_TRUE;
-inline constexpr std::uint32_t k_VK_FALSE                    = VK_FALSE;
-inline constexpr std::uint32_t k_VK_API_VERSION_1_3          = VK_API_VERSION_1_3;
-inline constexpr std::uint32_t k_VK_QUEUE_FAMILY_IGNORED     = VK_QUEUE_FAMILY_IGNORED;
-inline constexpr std::uint32_t k_VK_QUEUE_FAMILY_FOREIGN_EXT = VK_QUEUE_FAMILY_FOREIGN_EXT;
-inline constexpr std::uint64_t k_VK_WHOLE_SIZE               = VK_WHOLE_SIZE;
-inline constexpr std::uint32_t k_VK_API_VERSION_1_1          = VK_API_VERSION_1_1;
-inline constexpr std::uint32_t k_VK_REMAINING_ARRAY_LAYERS   = VK_REMAINING_ARRAY_LAYERS;
-inline constexpr std::uint32_t k_VK_REMAINING_MIP_LEVELS     = VK_REMAINING_MIP_LEVELS;
-inline constexpr std::uint32_t k_VK_SUBPASS_EXTERNAL         = VK_SUBPASS_EXTERNAL;
-inline constexpr std::uint32_t k_VK_VERSION_1_1              = VK_VERSION_1_1;
+inline constexpr auto     k_VK_API_VERSION_1_0          = VK_API_VERSION_1_0;
+inline constexpr auto     k_VK_API_VERSION_1_2          = VK_API_VERSION_1_2;
+inline constexpr auto     k_VK_MAX_MEMORY_TYPES         = VK_MAX_MEMORY_TYPES;
+inline constexpr auto     k_VK_MAX_MEMORY_HEAPS         = VK_MAX_MEMORY_HEAPS;
+inline constexpr uint32_t k_VK_TRUE                     = VK_TRUE;
+inline constexpr uint32_t k_VK_FALSE                    = VK_FALSE;
+inline constexpr uint32_t k_VK_API_VERSION_1_3          = VK_API_VERSION_1_3;
+inline constexpr uint32_t k_VK_QUEUE_FAMILY_IGNORED     = VK_QUEUE_FAMILY_IGNORED;
+inline constexpr uint32_t k_VK_QUEUE_FAMILY_FOREIGN_EXT = VK_QUEUE_FAMILY_FOREIGN_EXT;
+inline constexpr uint64_t k_VK_WHOLE_SIZE               = VK_WHOLE_SIZE;
+inline constexpr uint32_t k_VK_API_VERSION_1_1          = VK_API_VERSION_1_1;
+inline constexpr uint32_t k_VK_REMAINING_ARRAY_LAYERS   = VK_REMAINING_ARRAY_LAYERS;
+inline constexpr uint32_t k_VK_REMAINING_MIP_LEVELS     = VK_REMAINING_MIP_LEVELS;
+inline constexpr uint32_t k_VK_SUBPASS_EXTERNAL         = VK_SUBPASS_EXTERNAL;
+inline constexpr uint32_t k_VK_VERSION_1_1              = VK_VERSION_1_1;
 } // namespace _wv_vk
 
 #undef VK_TRUE
@@ -119,7 +118,7 @@ inline constexpr const char* k_VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME =
 namespace _wv_vk
 {
 struct NullHandle {
-    constexpr operator std::uint64_t() const noexcept { return 0; }
+    constexpr operator uint64_t() const noexcept { return 0; }
     template<class T>
     constexpr operator T*() const noexcept {
         return nullptr;
@@ -144,18 +143,17 @@ export module vvk:ffi.vulkan.constants;
 export {
     // ---- captured macros ----
 
-    inline constexpr std::uint32_t VK_TRUE                 = _wv_vk::k_VK_TRUE;
-    inline constexpr std::uint32_t VK_FALSE                = _wv_vk::k_VK_FALSE;
-    inline constexpr std::uint32_t VK_API_VERSION_1_3      = _wv_vk::k_VK_API_VERSION_1_3;
-    inline constexpr std::uint32_t VK_QUEUE_FAMILY_IGNORED = _wv_vk::k_VK_QUEUE_FAMILY_IGNORED;
-    inline constexpr std::uint32_t VK_QUEUE_FAMILY_FOREIGN_EXT =
-        _wv_vk::k_VK_QUEUE_FAMILY_FOREIGN_EXT;
-    inline constexpr std::uint64_t VK_WHOLE_SIZE             = _wv_vk::k_VK_WHOLE_SIZE;
-    inline constexpr std::uint32_t VK_API_VERSION_1_1        = _wv_vk::k_VK_API_VERSION_1_1;
-    inline constexpr std::uint32_t VK_REMAINING_ARRAY_LAYERS = _wv_vk::k_VK_REMAINING_ARRAY_LAYERS;
-    inline constexpr std::uint32_t VK_REMAINING_MIP_LEVELS   = _wv_vk::k_VK_REMAINING_MIP_LEVELS;
-    inline constexpr std::uint32_t VK_SUBPASS_EXTERNAL       = _wv_vk::k_VK_SUBPASS_EXTERNAL;
-    inline constexpr std::uint32_t VK_VERSION_1_1            = _wv_vk::k_VK_VERSION_1_1;
+    inline constexpr uint32_t VK_TRUE                     = _wv_vk::k_VK_TRUE;
+    inline constexpr uint32_t VK_FALSE                    = _wv_vk::k_VK_FALSE;
+    inline constexpr uint32_t VK_API_VERSION_1_3          = _wv_vk::k_VK_API_VERSION_1_3;
+    inline constexpr uint32_t VK_QUEUE_FAMILY_IGNORED     = _wv_vk::k_VK_QUEUE_FAMILY_IGNORED;
+    inline constexpr uint32_t VK_QUEUE_FAMILY_FOREIGN_EXT = _wv_vk::k_VK_QUEUE_FAMILY_FOREIGN_EXT;
+    inline constexpr uint64_t VK_WHOLE_SIZE               = _wv_vk::k_VK_WHOLE_SIZE;
+    inline constexpr uint32_t VK_API_VERSION_1_1          = _wv_vk::k_VK_API_VERSION_1_1;
+    inline constexpr uint32_t VK_REMAINING_ARRAY_LAYERS   = _wv_vk::k_VK_REMAINING_ARRAY_LAYERS;
+    inline constexpr uint32_t VK_REMAINING_MIP_LEVELS     = _wv_vk::k_VK_REMAINING_MIP_LEVELS;
+    inline constexpr uint32_t VK_SUBPASS_EXTERNAL         = _wv_vk::k_VK_SUBPASS_EXTERNAL;
+    inline constexpr uint32_t VK_VERSION_1_1              = _wv_vk::k_VK_VERSION_1_1;
 
     inline constexpr const char* VK_KHR_EXTERNAL_FENCE_CAPABILITIES_EXTENSION_NAME =
         _wv_vk_ext::k_VK_KHR_EXTERNAL_FENCE_CAPABILITIES_EXTENSION_NAME;
@@ -200,18 +198,17 @@ export {
 
     inline constexpr _wv_vk::NullHandle VK_NULL_HANDLE {};
 
-    inline constexpr std::uint32_t VK_MAKE_VERSION(std::uint32_t major, std::uint32_t minor,
-                                                   std::uint32_t patch) {
+    inline constexpr uint32_t VK_MAKE_VERSION(uint32_t major, uint32_t minor, uint32_t patch) {
         return (major << 22) | (minor << 12) | patch;
     }
 }
 
 export {
-    inline constexpr auto          VK_API_VERSION_1_0  = _wv_vk::k_VK_API_VERSION_1_0;
-    inline constexpr auto          VK_API_VERSION_1_2  = _wv_vk::k_VK_API_VERSION_1_2;
-    inline constexpr auto          VK_MAX_MEMORY_TYPES = _wv_vk::k_VK_MAX_MEMORY_TYPES;
-    inline constexpr auto          VK_MAX_MEMORY_HEAPS = _wv_vk::k_VK_MAX_MEMORY_HEAPS;
-    inline constexpr std::uint32_t VK_API_VERSION_VARIANT(std::uint32_t version) {
+    inline constexpr auto     VK_API_VERSION_1_0  = _wv_vk::k_VK_API_VERSION_1_0;
+    inline constexpr auto     VK_API_VERSION_1_2  = _wv_vk::k_VK_API_VERSION_1_2;
+    inline constexpr auto     VK_MAX_MEMORY_TYPES = _wv_vk::k_VK_MAX_MEMORY_TYPES;
+    inline constexpr auto     VK_MAX_MEMORY_HEAPS = _wv_vk::k_VK_MAX_MEMORY_HEAPS;
+    inline constexpr uint32_t VK_API_VERSION_VARIANT(uint32_t version) {
         return _wv_vk::ApiVersionVariant(version);
     }
 }

@@ -1,5 +1,4 @@
 module;
-#include <cstring>
 #include "vvk/macros.hpp"
 
 module vvk;

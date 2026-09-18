@@ -16,10 +16,6 @@ public-include-directories = ["include"]
 version = "0.1.0"
 pub = true
 
-[dependencies.rstd-cppstd]
-version = "0.1.0"
-pub = true
-
 [dependencies.rstd-dlopn]
 version = "0.1.0"
 pub = true

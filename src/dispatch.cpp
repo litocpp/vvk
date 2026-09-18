@@ -1,5 +1,3 @@
-module;
-#include <cstring>
 module vvk;
 import rstd;
 using namespace rstd::prelude;
@@ -11,8 +9,10 @@ DispatchError MissingDispatch(DispatchStage stage, const char* command) {
 }
 bool HasExtension(rstd::uint32_t count, const char* const* names, const char* wanted) {
     if (! names) return false;
+    const auto wanted_bytes = rstd::ffi::CStr::from_ptr(wanted).to_bytes();
     for (rstd::uint32_t i = 0; i < count; ++i)
-        if (names[i] && std::strcmp(names[i], wanted) == 0) return true;
+        if (names[i] && (rstd::ffi::CStr::from_ptr(names[i]).to_bytes() == wanted_bytes))
+            return true;
     return false;
 }
 auto ParseInstanceCapabilities(const VkInstanceCreateInfo& info)

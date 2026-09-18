@@ -1,11 +1,9 @@
-#include <vvk/ffi/vulkan_abi.hpp>
+#include <vulkan/vk_platform.h>
 #include <rstd/test/gtest.hpp>
-#include <cstdlib>
-#include <cstring>
-#include <cstdio>
 import rstd;
 import vvk;
 using namespace rstd::prelude;
+using namespace rstd::literals;
 
 namespace
 {
@@ -23,12 +21,15 @@ struct ResolverState {
     VkInstanceCreateFlags instance_flags {};
     bool                  queried(const char* name) const {
         for (unsigned i = 0; i < query_count; ++i)
-            if (std::strcmp(queries[i], name) == 0) return true;
+            if ((rstd::ffi::CStr::from_ptr(queries[i]).to_bytes() ==
+                 rstd::ffi::CStr::from_ptr(name).to_bytes()))
+                return true;
         return false;
     }
     bool record(const char* name) {
         if (query_count < 512) queries[query_count++] = name;
-        return ! missing || std::strcmp(missing, name) != 0;
+        return ! missing || (rstd::ffi::CStr::from_ptr(missing).to_bytes() !=
+                             rstd::ffi::CStr::from_ptr(name).to_bytes());
     }
 } state;
 void VKAPI_CALL     Uncalled() {}
@@ -65,40 +66,48 @@ VkResult VKAPI_CALL WaitB(VkDevice device) {
     return VK_SUCCESS;
 }
 bool InstanceCommand(const char* name) {
-    return std::strncmp(name, "vkGetPhysicalDevice", 19) == 0 ||
-           std::strcmp(name, "vkEnumeratePhysicalDevices") == 0 ||
-           std::strcmp(name, "vkEnumerateDeviceExtensionProperties") == 0 ||
-           std::strcmp(name, "vkCreateDevice") == 0 ||
-           std::strcmp(name, "vkDestroyInstance") == 0 ||
-           std::strcmp(name, "vkGetDeviceProcAddr") == 0 ||
-           std::strcmp(name, "vkDestroySurfaceKHR") == 0 ||
-           std::strstr(name, "DebugUtilsMessenger") != nullptr;
+    const auto command = rstd::ffi::CStr::from_ptr(name).to_str().unwrap();
+    return command.starts_with("vkGetPhysicalDevice"_str) ||
+           command == "vkEnumeratePhysicalDevices"_str ||
+           command == "vkEnumerateDeviceExtensionProperties"_str ||
+           command == "vkCreateDevice"_str || command == "vkDestroyInstance"_str ||
+           command == "vkGetDeviceProcAddr"_str || command == "vkDestroySurfaceKHR"_str ||
+           command.contains("DebugUtilsMessenger"_str);
 }
 PFN_vkVoidFunction VKAPI_CALL DeviceResolver(VkDevice device, const char* name) {
     EXPECT_EQ(device, state.expected_device);
     EXPECT_FALSE(InstanceCommand(name));
     if (! state.record(name)) return nullptr;
-    if (std::strcmp(name, "vkDestroyDevice") == 0)
+    if ((rstd::ffi::CStr::from_ptr(name).to_bytes() ==
+         rstd::ffi::CStr::from_ptr("vkDestroyDevice").to_bytes()))
         return reinterpret_cast<PFN_vkVoidFunction>(DestroyDevice);
-    if (std::strcmp(name, "vkDeviceWaitIdle") == 0)
+    if ((rstd::ffi::CStr::from_ptr(name).to_bytes() ==
+         rstd::ffi::CStr::from_ptr("vkDeviceWaitIdle").to_bytes()))
         return reinterpret_cast<PFN_vkVoidFunction>(device == Fake<VkDevice>(11) ? WaitA : WaitB);
     return Uncalled;
 }
 PFN_vkVoidFunction VKAPI_CALL InstanceResolver(VkInstance instance, const char* name) {
-    const bool global = std::strcmp(name, "vkCreateInstance") == 0 ||
-                        std::strncmp(name, "vkEnumerateInstance", 19) == 0;
+    const bool global =
+        (rstd::ffi::CStr::from_ptr(name).to_bytes() ==
+         rstd::ffi::CStr::from_ptr("vkCreateInstance").to_bytes()) ||
+        rstd::ffi::CStr::from_ptr(name).to_str().unwrap().starts_with("vkEnumerateInstance"_str);
     EXPECT_EQ(instance, global ? VK_NULL_HANDLE : state.expected_instance);
     if (! global) EXPECT_TRUE(InstanceCommand(name));
     if (! state.record(name)) return nullptr;
-    if (std::strcmp(name, "vkCreateInstance") == 0)
+    if ((rstd::ffi::CStr::from_ptr(name).to_bytes() ==
+         rstd::ffi::CStr::from_ptr("vkCreateInstance").to_bytes()))
         return reinterpret_cast<PFN_vkVoidFunction>(CreateInstance);
-    if (std::strcmp(name, "vkCreateDevice") == 0)
+    if ((rstd::ffi::CStr::from_ptr(name).to_bytes() ==
+         rstd::ffi::CStr::from_ptr("vkCreateDevice").to_bytes()))
         return reinterpret_cast<PFN_vkVoidFunction>(CreateDevice);
-    if (std::strcmp(name, "vkDestroyInstance") == 0)
+    if ((rstd::ffi::CStr::from_ptr(name).to_bytes() ==
+         rstd::ffi::CStr::from_ptr("vkDestroyInstance").to_bytes()))
         return reinterpret_cast<PFN_vkVoidFunction>(DestroyInstance);
-    if (std::strcmp(name, "vkGetPhysicalDeviceProperties") == 0)
+    if ((rstd::ffi::CStr::from_ptr(name).to_bytes() ==
+         rstd::ffi::CStr::from_ptr("vkGetPhysicalDeviceProperties").to_bytes()))
         return reinterpret_cast<PFN_vkVoidFunction>(Properties);
-    if (std::strcmp(name, "vkGetDeviceProcAddr") == 0)
+    if ((rstd::ffi::CStr::from_ptr(name).to_bytes() ==
+         rstd::ffi::CStr::from_ptr("vkGetDeviceProcAddr").to_bytes()))
         return reinterpret_cast<PFN_vkVoidFunction>(DeviceResolver);
     return Uncalled;
 }
@@ -147,7 +156,8 @@ TEST(Dispatch, RequiredCommandsAndDomains) {
     ASSERT_TRUE(failed.is_err());
     auto error = failed.unwrap_err_unchecked();
     EXPECT_EQ(error.stage, vvk::DispatchStage::Global);
-    EXPECT_EQ(std::strcmp(error.command, "vkCreateInstance"), 0);
+    EXPECT_TRUE(rstd::ffi::CStr::from_ptr(error.command).to_bytes() ==
+                rstd::ffi::CStr::from_ptr("vkCreateInstance").to_bytes());
     state.missing     = "vkGetPhysicalDeviceProperties";
     auto bad_instance = vvk::LoadInstance(table, state.expected_instance, {});
     ASSERT_TRUE(bad_instance.is_err());
@@ -155,7 +165,8 @@ TEST(Dispatch, RequiredCommandsAndDomains) {
     state.missing   = "vkAllocateMemory";
     auto bad_device = vvk::LoadDevice(parent, state.expected_device, {});
     ASSERT_TRUE(bad_device.is_err());
-    EXPECT_EQ(std::strcmp(bad_device.unwrap_err_unchecked().command, "vkAllocateMemory"), 0);
+    EXPECT_TRUE(rstd::ffi::CStr::from_ptr(bad_device.unwrap_err_unchecked().command).to_bytes() ==
+                rstd::ffi::CStr::from_ptr("vkAllocateMemory").to_bytes());
 }
 
 TEST(Dispatch, VersionFeaturesAndLegalAliases) {
@@ -344,7 +355,7 @@ TEST(Loader, MissingLibraryAndInjectedMove) {
     auto error = missing.unwrap_err_unchecked();
     EXPECT_EQ(error.kind, vvk::LoaderErrorKind::OpenLibrary);
     EXPECT_FALSE(error.message.is_empty());
-    if (std::getenv("VVK_TEST_EXPECT_NO_LOADER")) {
+    if (rstd::env::var_os("VVK_TEST_EXPECT_NO_LOADER"_str).is_some()) {
         auto system = vvk::VulkanLoader::Open();
         ASSERT_TRUE(system.is_err());
         EXPECT_EQ(system.unwrap_err_unchecked().kind, vvk::LoaderErrorKind::OpenLibrary);
@@ -360,18 +371,20 @@ TEST(Loader, MissingLibraryAndInjectedMove) {
 }
 
 TEST(Loader, SharedLibraryLifetime) {
-    const char* path         = std::getenv("VVK_TEST_LOADER");
-    const char* missing_path = std::getenv("VVK_TEST_MISSING_ROOT");
-    if (! path || ! missing_path)
+    auto path         = rstd::env::var_os("VVK_TEST_LOADER"_str);
+    auto missing_path = rstd::env::var_os("VVK_TEST_MISSING_ROOT"_str);
+    if (path.is_none() || missing_path.is_none())
         GTEST_SKIP() << "Set VVK_TEST_LOADER and VVK_TEST_MISSING_ROOT to the test libraries";
-    auto missing = vvk::VulkanLoader::Open(rstd::ffi::CStr::from_ptr(missing_path));
+    auto missing = vvk::VulkanLoader::Open(
+        rstd::ffi::CString::make(missing_path->as_os_str().as_encoded_bytes()).unwrap().as_ref());
     ASSERT_TRUE(missing.is_err());
     auto error = missing.unwrap_err_unchecked();
     EXPECT_EQ(error.kind, vvk::LoaderErrorKind::RootSymbol);
     EXPECT_FALSE(error.message.is_empty());
     event_count = 0;
     {
-        auto opened = vvk::VulkanLoader::Open(rstd::ffi::CStr::from_ptr(path));
+        auto opened = vvk::VulkanLoader::Open(
+            rstd::ffi::CString::make(path->as_os_str().as_encoded_bytes()).unwrap().as_ref());
         ASSERT_TRUE(opened.is_ok());
         auto  original     = rstd::move(opened).unwrap_unchecked();
         auto* global       = &original.global();
