@@ -1,4 +1,4 @@
-#include <vulkan/vulkan.h>
+#include <vvk/ffi/vulkan_abi.hpp>
 #include <rstd/test/gtest.hpp>
 #include <cstdlib>
 #include <cstring>
@@ -363,7 +363,7 @@ TEST(Loader, SharedLibraryLifetime) {
     const char* path         = std::getenv("VVK_TEST_LOADER");
     const char* missing_path = std::getenv("VVK_TEST_MISSING_ROOT");
     if (! path || ! missing_path)
-        GTEST_SKIP() << "Run tests/verify-loader.sh to build and exercise the test libraries";
+        GTEST_SKIP() << "Set VVK_TEST_LOADER and VVK_TEST_MISSING_ROOT to the test libraries";
     auto missing = vvk::VulkanLoader::Open(rstd::ffi::CStr::from_ptr(missing_path));
     ASSERT_TRUE(missing.is_err());
     auto error = missing.unwrap_err_unchecked();

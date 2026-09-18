@@ -1,6 +1,3 @@
-module;
-#include <vulkan/vulkan.h>
-
 export module vvk:memory;
 import rstd;
 export import :ffi.vulkan;

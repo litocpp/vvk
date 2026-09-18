@@ -1,6 +1,5 @@
 module;
 #include <cstring>
-#include <vulkan/vulkan.h>
 #include "vvk/macros.hpp"
 
 module vvk;

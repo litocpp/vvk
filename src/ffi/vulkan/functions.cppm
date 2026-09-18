@@ -1,91 +1,12 @@
 module;
 
+#define VK_NO_PROTOTYPES
 #include <vulkan/vulkan.h>
 
 export module vvk:ffi.vulkan.functions;
 
 export {
-    // ---- functions (loadable directly when not using VK_NO_PROTOTYPES) ----
-
-    using ::vkAcquireNextImageKHR;
-    using ::vkAllocateCommandBuffers;
-    using ::vkAllocateDescriptorSets;
-    using ::vkAllocateMemory;
-    using ::vkBeginCommandBuffer;
-    using ::vkBindBufferMemory;
-    using ::vkBindImageMemory;
-    using ::vkBindImageMemory2;
-    using ::vkCmdBindDescriptorSets;
-    using ::vkCmdBindPipeline;
-    using ::vkCmdBlitImage;
-    using ::vkCmdClearColorImage;
-    using ::vkCmdCopyBufferToImage;
-    using ::vkCmdCopyImage;
-    using ::vkCmdDispatch;
-    using ::vkCmdPipelineBarrier;
-    using ::vkCmdPipelineBarrier2;
-    using ::vkCmdPushConstants;
-    using ::vkCreateBuffer;
-    using ::vkCreateCommandPool;
-    using ::vkCreateComputePipelines;
-    using ::vkCreateDescriptorPool;
-    using ::vkCreateDescriptorSetLayout;
-    using ::vkCreateDevice;
-    using ::vkCreateFence;
-    using ::vkCreateImage;
-    using ::vkCreateImageView;
-    using ::vkCreateInstance;
-    using ::vkCreatePipelineLayout;
-    using ::vkCreateSampler;
-    using ::vkCreateSemaphore;
-    using ::vkCreateShaderModule;
-    using ::vkCreateSwapchainKHR;
-    using ::vkDestroyBuffer;
-    using ::vkDestroyCommandPool;
-    using ::vkDestroyDescriptorPool;
-    using ::vkDestroyDescriptorSetLayout;
-    using ::vkDestroyDevice;
-    using ::vkDestroyFence;
-    using ::vkDestroyImage;
-    using ::vkDestroyImageView;
-    using ::vkDestroyInstance;
-    using ::vkDestroyPipeline;
-    using ::vkDestroyPipelineLayout;
-    using ::vkDestroySampler;
-    using ::vkDestroySemaphore;
-    using ::vkDestroyShaderModule;
-    using ::vkDestroySurfaceKHR;
-    using ::vkDestroySwapchainKHR;
-    using ::vkDeviceWaitIdle;
-    using ::vkEndCommandBuffer;
-    using ::vkEnumerateDeviceExtensionProperties;
-    using ::vkEnumeratePhysicalDevices;
-    using ::vkFreeMemory;
-    using ::vkGetBufferMemoryRequirements;
-    using ::vkGetDeviceProcAddr;
-    using ::vkGetDeviceQueue;
-    using ::vkGetImageMemoryRequirements;
-    using ::vkGetImageMemoryRequirements2;
-    using ::vkGetInstanceProcAddr;
-    using ::vkGetMemoryFdPropertiesKHR;
-    using ::vkGetPhysicalDeviceFeatures2;
-    using ::vkGetPhysicalDeviceMemoryProperties;
-    using ::vkGetPhysicalDeviceProperties2;
-    using ::vkGetPhysicalDeviceQueueFamilyProperties;
-    using ::vkGetPhysicalDeviceSurfaceCapabilitiesKHR;
-    using ::vkGetPhysicalDeviceSurfaceFormatsKHR;
-    using ::vkGetPhysicalDeviceSurfaceSupportKHR;
-    using ::vkGetSwapchainImagesKHR;
-    using ::vkMapMemory;
-    using ::vkQueuePresentKHR;
-    using ::vkQueueSubmit;
-    using ::vkResetCommandBuffer;
-    using ::vkResetFences;
-    using ::vkUnmapMemory;
-    using ::vkUpdateDescriptorSets;
-    using ::vkWaitForFences;
-
-    // ---- function pointer typedefs (PFN_*) for runtime dispatch tables ----
+    // Function pointer types for runtime dispatch.
 
     using ::PFN_vkAcquireNextImageKHR;
     using ::PFN_vkAllocateCommandBuffers;
@@ -239,8 +160,6 @@ export {
 export {
     using ::PFN_vkFlushMappedMemoryRanges;
     using ::PFN_vkInvalidateMappedMemoryRanges;
-    using ::vkFlushMappedMemoryRanges;
-    using ::vkInvalidateMappedMemoryRanges;
 }
 
 export {

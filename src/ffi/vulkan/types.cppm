@@ -3,6 +3,7 @@ module;
 #define VK_ACCESS_2_SHADER_SAMPLED_READ_BIT    vvk_header_access_2_shader_sampled_read_bit
 #define VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT   vvk_header_pipeline_stage_2_all_commands_bit
 #define VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT vvk_header_pipeline_stage_2_compute_shader_bit
+#define VK_NO_PROTOTYPES
 #include <vulkan/vulkan.h>
 #undef VK_ACCESS_2_SHADER_SAMPLED_READ_BIT
 #undef VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT
@@ -505,4 +506,53 @@ export {
     using ::VkMemoryAllocateFlags;
     using ::VkMemoryAllocateFlagsInfo;
     using ::VkPhysicalDeviceBufferDeviceAddressFeatures;
+}
+
+export {
+    using ::VK_BUFFER_CREATE_DEVICE_ADDRESS_CAPTURE_REPLAY_BIT;
+    using ::VK_BUFFER_CREATE_SPARSE_BINDING_BIT;
+    using ::VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
+    using ::VK_BUFFER_USAGE_STORAGE_TEXEL_BUFFER_BIT;
+    using ::VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT;
+    using ::VK_DESCRIPTOR_TYPE_MAX_ENUM;
+    using ::VK_ERROR_MEMORY_MAP_FAILED;
+    using ::VK_ERROR_TOO_MANY_OBJECTS;
+    using ::VK_ERROR_UNKNOWN;
+    using ::VK_FORMAT_D16_UNORM;
+    using ::VK_FORMAT_R8G8B8A8_SRGB;
+    using ::VK_IMAGE_CREATE_ALIAS_BIT;
+    using ::VK_IMAGE_CREATE_PROTECTED_BIT;
+    using ::VK_IMAGE_CREATE_SPARSE_BINDING_BIT;
+    using ::VK_IMAGE_TYPE_3D;
+    using ::VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT;
+    using ::VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT;
+    using ::VK_IMAGE_VIEW_TYPE_CUBE;
+    using ::VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+    using ::VK_MEMORY_ALLOCATE_DEVICE_MASK_BIT;
+    using ::VK_MEMORY_HEAP_DEVICE_LOCAL_BIT;
+    using ::VK_MEMORY_PROPERTY_DEVICE_COHERENT_BIT_AMD;
+    using ::VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
+    using ::VK_MEMORY_PROPERTY_PROTECTED_BIT;
+    using ::VK_PRESENT_MODE_IMMEDIATE_KHR;
+    using ::VK_SAMPLE_COUNT_4_BIT;
+    using ::VK_STRUCTURE_TYPE_BUFFER_OPAQUE_CAPTURE_ADDRESS_CREATE_INFO;
+    using ::VK_STRUCTURE_TYPE_DEVICE_GROUP_DEVICE_CREATE_INFO;
+    using ::VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES_EXT;
+    using ::VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_3_PROPERTIES;
+    using ::VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_EXECUTABLE_PROPERTIES_FEATURES_KHR;
+    using ::VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES;
+    using ::VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES;
+    using ::VK_TIMEOUT;
+    using ::VkBaseInStructure;
+    using ::VkBufferOpaqueCaptureAddressCreateInfo;
+    using ::VkDeviceGroupDeviceCreateInfo;
+    using ::VkImageCreateFlags;
+    using ::VkImageFormatProperties;
+    using ::VkInstanceCreateFlags;
+    using ::VkMemoryMapFlags;
+    using ::VkPhysicalDeviceBufferDeviceAddressFeaturesEXT;
+    using ::VkPhysicalDeviceMaintenance3Properties;
+    using ::VkPhysicalDevicePipelineExecutablePropertiesFeaturesKHR;
+    using ::VkPhysicalDeviceSynchronization2Features;
+    using ::VkPhysicalDeviceTimelineSemaphoreFeatures;
 }

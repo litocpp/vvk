@@ -1,5 +1,6 @@
 module;
 
+#define VK_NO_PROTOTYPES
 #include <vulkan/vulkan.h>
 #include <cstdint>
 
@@ -8,6 +9,14 @@ module;
 // in a hidden namespace, #undef'd, and re-exported as constexpr alternates.
 namespace _wv_vk
 {
+inline constexpr std::uint32_t ApiVersionVariant(std::uint32_t version) {
+    return VK_API_VERSION_VARIANT(version);
+}
+
+inline constexpr auto          k_VK_API_VERSION_1_0          = VK_API_VERSION_1_0;
+inline constexpr auto          k_VK_API_VERSION_1_2          = VK_API_VERSION_1_2;
+inline constexpr auto          k_VK_MAX_MEMORY_TYPES         = VK_MAX_MEMORY_TYPES;
+inline constexpr auto          k_VK_MAX_MEMORY_HEAPS         = VK_MAX_MEMORY_HEAPS;
 inline constexpr std::uint32_t k_VK_TRUE                     = VK_TRUE;
 inline constexpr std::uint32_t k_VK_FALSE                    = VK_FALSE;
 inline constexpr std::uint32_t k_VK_API_VERSION_1_3          = VK_API_VERSION_1_3;
@@ -35,6 +44,13 @@ inline constexpr std::uint32_t k_VK_VERSION_1_1              = VK_VERSION_1_1;
 
 namespace _wv_vk_ext
 {
+inline constexpr const char* k_VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME =
+    VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME;
+inline constexpr const char* k_VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME =
+    VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME;
+inline constexpr const char* k_VK_EXT_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME =
+    VK_EXT_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME;
+
 inline constexpr const char* k_VK_KHR_EXTERNAL_FENCE_CAPABILITIES_EXTENSION_NAME =
     VK_KHR_EXTERNAL_FENCE_CAPABILITIES_EXTENSION_NAME;
 inline constexpr const char* k_VK_KHR_EXTERNAL_MEMORY_CAPABILITIES_EXTENSION_NAME =
@@ -113,6 +129,16 @@ struct NullHandle {
 #undef VK_NULL_HANDLE
 #undef VK_MAKE_VERSION
 
+#undef VK_API_VERSION_1_0
+#undef VK_API_VERSION_1_2
+#undef VK_MAX_MEMORY_TYPES
+#undef VK_MAX_MEMORY_HEAPS
+#undef VK_API_VERSION_VARIANT
+
+#undef VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME
+#undef VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME
+#undef VK_EXT_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME
+
 export module vvk:ffi.vulkan.constants;
 
 export {
@@ -178,4 +204,23 @@ export {
                                                    std::uint32_t patch) {
         return (major << 22) | (minor << 12) | patch;
     }
+}
+
+export {
+    inline constexpr auto          VK_API_VERSION_1_0  = _wv_vk::k_VK_API_VERSION_1_0;
+    inline constexpr auto          VK_API_VERSION_1_2  = _wv_vk::k_VK_API_VERSION_1_2;
+    inline constexpr auto          VK_MAX_MEMORY_TYPES = _wv_vk::k_VK_MAX_MEMORY_TYPES;
+    inline constexpr auto          VK_MAX_MEMORY_HEAPS = _wv_vk::k_VK_MAX_MEMORY_HEAPS;
+    inline constexpr std::uint32_t VK_API_VERSION_VARIANT(std::uint32_t version) {
+        return _wv_vk::ApiVersionVariant(version);
+    }
+}
+
+export {
+    inline constexpr const char* VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME =
+        _wv_vk_ext::k_VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME;
+    inline constexpr const char* VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME =
+        _wv_vk_ext::k_VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME;
+    inline constexpr const char* VK_EXT_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME =
+        _wv_vk_ext::k_VK_EXT_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME;
 }

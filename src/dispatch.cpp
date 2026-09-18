@@ -1,5 +1,4 @@
 module;
-#include <vulkan/vulkan.h>
 #include <cstring>
 module vvk;
 import rstd;

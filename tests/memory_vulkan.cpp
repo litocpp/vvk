@@ -1,4 +1,4 @@
-#include <vulkan/vulkan.h>
+#include <vvk/ffi/vulkan_abi.hpp>
 #include <rstd/test/gtest.hpp>
 #include <cstdio>
 #include <cstring>
