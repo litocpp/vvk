@@ -29,20 +29,6 @@ version = "0.1.0"
 package = "VulkanHeaders"
 targets = [{ name = "Vulkan::Headers", pub = true }]
 
-[external-sources.vma]
-git = "https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git"
-rev = "3aa921224c154a0d2c43912bc88e1c42ce1f7607"
-
-[external-dependencies.cmake.vma]
-package = "VulkanMemoryAllocator"
-source = "vma"
-cache = {
-  VMA_BUILD_DOCUMENTATION = false,
-  VMA_BUILD_SAMPLES = false,
-  VMA_ENABLE_INSTALL = true,
-}
-targets = [{ name = "GPUOpen::VulkanMemoryAllocator", pub = true }]
-
 [[test]]
 name = "vvk-memory-tests"
 sources = ["tests/main.cpp", "tests/memory.cpp", "tests/memory_vulkan.cpp", "tests/memory_import.cpp", "tests/dispatch.cpp"]

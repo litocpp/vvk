@@ -2,7 +2,6 @@ export module vvk;
 
 export import :ffi.vulkan;
 export import :handle;
-export import :vma;
 export import :dispatch;
 export import :objects;
 export import :completion;

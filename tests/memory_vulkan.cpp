@@ -816,34 +816,6 @@ TEST(MemoryVulkan, RingUploadWrapAndSubmissionLifetime) {
     EXPECT_EQ(context.errors, 0u);
 }
 
-TEST(MemoryVulkan, VmaRuntimeDispatchBuffer) {
-    VulkanMemoryTest context;
-    bool             initialized = context.initialize();
-    if (context.unavailable)
-        GTEST_SKIP() << "No Vulkan loader, ICD, or Vulkan 1.1 graphics device available";
-    ASSERT_TRUE(initialized);
-    {
-        VmaAllocatorCreateInfo info {};
-        info.instance       = context.instance;
-        info.physicalDevice = context.gpu;
-        info.device         = context.device;
-        auto result         = vvk::CreateVmaAllocator(
-            info, *context.global, context.instance_dispatch, context.device_dispatch);
-        ASSERT_TRUE(result.is_ok());
-        auto                    allocator = rstd::move(result).unwrap_unchecked();
-        VmaAllocationCreateInfo allocation {};
-        allocation.usage = VMA_MEMORY_USAGE_GPU_ONLY;
-        vvk::VmaBuffer buffer;
-        EXPECT_EQ(vvk::CreateBuffer(*allocator,
-                                    BufferCreate(4096, VK_BUFFER_USAGE_TRANSFER_DST_BIT),
-                                    allocation,
-                                    buffer),
-                  VK_SUCCESS);
-        EXPECT_TRUE(bool(buffer));
-    }
-    EXPECT_EQ(context.errors, 0u);
-}
-
 TEST(MemoryVulkan, GrowingAllocatorImageReadback) {
     CheckImageTransfer(
         VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT, false, VK_API_VERSION_1_1, { 4096, 65536, 3, true });

@@ -320,9 +320,8 @@ TEST(Dispatch, MalformedResolverPreservesUnownedHandles) {
     DestroyDevice(device_error.unowned_device, nullptr);
 }
 
-TEST(Dispatch, ConsumerFactoriesAndVmaValidation) {
+TEST(Dispatch, ConsumerFactoriesAndMemoryValidation) {
     state       = {};
-    auto global = vvk::LoadGlobal(InstanceResolver).unwrap_unchecked();
     auto parent = Parent();
     auto device = vvk::LoadDevice(parent, state.expected_device, {}).unwrap_unchecked();
     auto memory = vvk::MemoryDispatch::FromDispatch(parent, device);
@@ -332,23 +331,9 @@ TEST(Dispatch, ConsumerFactoriesAndVmaValidation) {
     EXPECT_TRUE(descriptors.valid());
     auto timeline = vvk::TimelineSemaphoreDeviceDispatch::FromDispatch(device);
     EXPECT_FALSE(timeline.valid());
-    VmaAllocatorCreateInfo info {};
-    info.instance              = parent.instance;
-    info.device                = device.device;
-    info.physicalDevice        = Fake<VkPhysicalDevice>(3);
-    auto broken                = device;
-    broken.vkGetDeviceProcAddr = nullptr;
-    EXPECT_TRUE(vvk::CreateVmaAllocator(info, global, parent, broken).is_err());
-    broken                     = device;
-    broken.vkBindBufferMemory2 = nullptr;
-    auto absent                = vvk::CreateVmaAllocator(info, global, parent, broken);
-    ASSERT_TRUE(absent.is_err());
-    EXPECT_EQ(std::strcmp(absent.unwrap_err_unchecked().command, "vkBindBufferMemory2"), 0);
-    info.flags = VMA_ALLOCATOR_CREATE_EXT_MEMORY_BUDGET_BIT;
-    EXPECT_TRUE(vvk::CreateVmaAllocator(info, global, parent, device).is_err());
-    broken          = device;
+    auto broken     = device;
     broken.instance = Fake<VkInstance>(9);
-    EXPECT_TRUE(vvk::MemoryAllocator::Create(info.physicalDevice, parent, broken).is_err());
+    EXPECT_TRUE(vvk::MemoryAllocator::Create(Fake<VkPhysicalDevice>(3), parent, broken).is_err());
 }
 
 TEST(Loader, MissingLibraryAndInjectedMove) {

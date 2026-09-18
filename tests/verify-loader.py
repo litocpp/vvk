@@ -59,8 +59,10 @@ undefined = subprocess.check_output(['nm', '-u', root / 'build/debug/lib/vvk/lib
 if re.search(r'libvulkan', needed, re.I) or re.search(r'\bU vk[A-Z]', undefined):
     raise SystemExit('Direct Vulkan loader dependency remains')
 symbols = subprocess.check_output(['nm', '--defined-only', binary], text=True)
-if not re.search(r'\b[Tt] vmaCreateAllocator$', symbols, re.M):
-    raise SystemExit('VMA implementation was not linked into the test executable')
+archive_symbols = subprocess.check_output(
+    ['nm', root / 'build/debug/lib/vvk/libvvk.a'], text=True)
+if re.search(r'\bvma[A-Z]\w*', symbols + archive_symbols):
+    raise SystemExit('VMA symbols remain in the library or test executable')
 libs = subprocess.check_output(['ldd', binary], text=True)
 if 'libvulkan' in libs:
     raise SystemExit('Transitive Vulkan loader dependency remains')
@@ -97,4 +99,4 @@ run(['bwrap', '--ro-bind', str(runtime), '/', '--dev', '/dev', '--proc', '/proc'
      '--setenv', 'VVK_TEST_MISSING_ROOT', '/missing-root.so',
      '--setenv', 'VVK_TEST_EXPECT_NO_LOADER', '1',
      '/test', '--gtest_filter=-MemoryVulkan.*'])
-print('Headers-only, VMA-linked ELF and isolated no-loader checks passed.')
+print('Headers-only, VMA-free ELF and isolated no-loader checks passed.')
