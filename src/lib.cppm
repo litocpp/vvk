@@ -8,3 +8,4 @@ export import :completion;
 export import :descriptor;
 export import :memory;
 export import :loader;
+export import :format;

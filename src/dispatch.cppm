@@ -14,10 +14,6 @@ using namespace rstd::prelude;
 export namespace vvk
 {
 
-const char* ToString(VkResult result) noexcept;
-const char* ToString(VkFormat format) noexcept;
-const char* ToString(VkColorSpaceKHR color) noexcept;
-
 enum class DispatchStage
 {
     Global,

@@ -6,7 +6,7 @@
 //
 // Module impl units that need these macros must GMF-include this header
 // AND `import rstd;` + `import vvk;` so rstd::log::* and
-// vvk::ToString resolve at the call site.
+// the Vulkan Display implementations resolve at the call site.
 
 #include <rstd/macro.hpp>
 
@@ -18,7 +18,7 @@
     {                                                              \
         VkResult _res = (f);                                       \
         if (_res != VK_SUCCESS && _res != VK_SUBOPTIMAL_KHR) {     \
-            rstd_error("VkResult is \"{}\"", vvk::ToString(_res)); \
+            rstd_error("VkResult is \"{}\"", _res); \
             rstd_assert(_res == VK_SUCCESS);                       \
             {                                                      \
                 act;                                               \
