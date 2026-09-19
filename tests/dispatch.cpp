@@ -5,6 +5,8 @@ import vvk;
 using namespace rstd::prelude;
 using namespace rstd::literals;
 
+static_assert(VkFormatFeatureFlags { VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT } != 0);
+
 namespace
 {
 template<class T>
