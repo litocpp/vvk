@@ -14,6 +14,7 @@ export module vvk:ffi.vulkan.types;
 export {
     // ---- handle types, struct types, enums, flags ----
 
+    using ::VK_PIPELINE_CREATE_DISABLE_OPTIMIZATION_BIT;
     using ::VkAccessFlags;
     using ::VkAccessFlags2;
     using ::VkAllocationCallbacks;
@@ -190,6 +191,7 @@ export {
     using ::VkRenderPassCreateInfo;
     using ::VkResult;
     using ::VkSampleCountFlagBits;
+    using ::VkSampleCountFlags;
     using ::VkSampler;
     using ::VkSamplerAddressMode;
     using ::VkSamplerCreateInfo;

@@ -16,6 +16,7 @@ inline constexpr auto     k_VK_API_VERSION_1_0          = VK_API_VERSION_1_0;
 inline constexpr auto     k_VK_API_VERSION_1_2          = VK_API_VERSION_1_2;
 inline constexpr auto     k_VK_MAX_MEMORY_TYPES         = VK_MAX_MEMORY_TYPES;
 inline constexpr auto     k_VK_MAX_MEMORY_HEAPS         = VK_MAX_MEMORY_HEAPS;
+inline constexpr auto     k_VK_UUID_SIZE                = VK_UUID_SIZE;
 inline constexpr uint32_t k_VK_TRUE                     = VK_TRUE;
 inline constexpr uint32_t k_VK_FALSE                    = VK_FALSE;
 inline constexpr uint32_t k_VK_API_VERSION_1_3          = VK_API_VERSION_1_3;
@@ -30,6 +31,7 @@ inline constexpr uint32_t k_VK_VERSION_1_1              = VK_VERSION_1_1;
 } // namespace _wv_vk
 
 #undef VK_TRUE
+#undef VK_UUID_SIZE
 #undef VK_FALSE
 #undef VK_API_VERSION_1_3
 #undef VK_QUEUE_FAMILY_IGNORED
@@ -43,6 +45,22 @@ inline constexpr uint32_t k_VK_VERSION_1_1              = VK_VERSION_1_1;
 
 namespace _wv_vk_ext
 {
+inline constexpr const char* k_VK_KHR_VIDEO_QUEUE_EXTENSION_NAME =
+    VK_KHR_VIDEO_QUEUE_EXTENSION_NAME;
+inline constexpr const char* k_VK_KHR_VIDEO_DECODE_QUEUE_EXTENSION_NAME =
+    VK_KHR_VIDEO_DECODE_QUEUE_EXTENSION_NAME;
+inline constexpr const char* k_VK_KHR_VIDEO_DECODE_H264_EXTENSION_NAME =
+    VK_KHR_VIDEO_DECODE_H264_EXTENSION_NAME;
+inline constexpr const char* k_VK_KHR_VIDEO_DECODE_H265_EXTENSION_NAME =
+    VK_KHR_VIDEO_DECODE_H265_EXTENSION_NAME;
+inline constexpr const char* k_VK_KHR_VIDEO_DECODE_AV1_EXTENSION_NAME =
+    VK_KHR_VIDEO_DECODE_AV1_EXTENSION_NAME;
+inline constexpr const char* k_VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME =
+    VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME;
+inline constexpr const char* k_VK_EXT_DESCRIPTOR_BUFFER_EXTENSION_NAME =
+    VK_EXT_DESCRIPTOR_BUFFER_EXTENSION_NAME;
+inline constexpr const char* k_VK_EXT_SHADER_OBJECT_EXTENSION_NAME =
+    VK_EXT_SHADER_OBJECT_EXTENSION_NAME;
 inline constexpr const char* k_VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME =
     VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME;
 inline constexpr const char* k_VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME =
@@ -111,6 +129,14 @@ inline constexpr const char* k_VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME =
 #undef VK_KHR_SWAPCHAIN_EXTENSION_NAME
 #undef VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME
 #undef VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME
+#undef VK_KHR_VIDEO_QUEUE_EXTENSION_NAME
+#undef VK_KHR_VIDEO_DECODE_QUEUE_EXTENSION_NAME
+#undef VK_KHR_VIDEO_DECODE_H264_EXTENSION_NAME
+#undef VK_KHR_VIDEO_DECODE_H265_EXTENSION_NAME
+#undef VK_KHR_VIDEO_DECODE_AV1_EXTENSION_NAME
+#undef VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME
+#undef VK_EXT_DESCRIPTOR_BUFFER_EXTENSION_NAME
+#undef VK_EXT_SHADER_OBJECT_EXTENSION_NAME
 
 // VK_NULL_HANDLE is `#define VK_NULL_HANDLE 0` — wrap with conversion ops
 // so it compares cleanly against both dispatchable (pointer) and non-
@@ -139,6 +165,25 @@ struct NullHandle {
 #undef VK_EXT_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME
 
 export module vvk:ffi.vulkan.constants;
+
+export {
+    inline constexpr const char* VK_KHR_VIDEO_QUEUE_EXTENSION_NAME =
+        _wv_vk_ext::k_VK_KHR_VIDEO_QUEUE_EXTENSION_NAME;
+    inline constexpr const char* VK_KHR_VIDEO_DECODE_QUEUE_EXTENSION_NAME =
+        _wv_vk_ext::k_VK_KHR_VIDEO_DECODE_QUEUE_EXTENSION_NAME;
+    inline constexpr const char* VK_KHR_VIDEO_DECODE_H264_EXTENSION_NAME =
+        _wv_vk_ext::k_VK_KHR_VIDEO_DECODE_H264_EXTENSION_NAME;
+    inline constexpr const char* VK_KHR_VIDEO_DECODE_H265_EXTENSION_NAME =
+        _wv_vk_ext::k_VK_KHR_VIDEO_DECODE_H265_EXTENSION_NAME;
+    inline constexpr const char* VK_KHR_VIDEO_DECODE_AV1_EXTENSION_NAME =
+        _wv_vk_ext::k_VK_KHR_VIDEO_DECODE_AV1_EXTENSION_NAME;
+    inline constexpr const char* VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME =
+        _wv_vk_ext::k_VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME;
+    inline constexpr const char* VK_EXT_DESCRIPTOR_BUFFER_EXTENSION_NAME =
+        _wv_vk_ext::k_VK_EXT_DESCRIPTOR_BUFFER_EXTENSION_NAME;
+    inline constexpr const char* VK_EXT_SHADER_OBJECT_EXTENSION_NAME =
+        _wv_vk_ext::k_VK_EXT_SHADER_OBJECT_EXTENSION_NAME;
+}
 
 export {
     // ---- captured macros ----
@@ -208,6 +253,7 @@ export {
     inline constexpr auto     VK_API_VERSION_1_2  = _wv_vk::k_VK_API_VERSION_1_2;
     inline constexpr auto     VK_MAX_MEMORY_TYPES = _wv_vk::k_VK_MAX_MEMORY_TYPES;
     inline constexpr auto     VK_MAX_MEMORY_HEAPS = _wv_vk::k_VK_MAX_MEMORY_HEAPS;
+    inline constexpr auto     VK_UUID_SIZE        = _wv_vk::k_VK_UUID_SIZE;
     inline constexpr uint32_t VK_API_VERSION_VARIANT(uint32_t version) {
         return _wv_vk::ApiVersionVariant(version);
     }
