@@ -23,9 +23,10 @@ pub = true
 [dependencies.rstd-log]
 version = "0.1.0"
 
-[external-dependencies.cmake.vulkan]
-package = "VulkanHeaders"
-targets = [{ name = "Vulkan::Headers", pub = true }]
+[external-dependencies.pkg-config.vulkan]
+module = "vulkan"
+usage = "compile"
+pub = true
 
 [[test]]
 name = "vvk-memory-tests"
