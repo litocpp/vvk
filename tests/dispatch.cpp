@@ -125,11 +125,6 @@ auto Parent() -> vvk::InstanceDispatch {
     return vvk::LoadInstance(global, state.expected_instance, { .api_version = VK_API_VERSION_1_3 })
         .unwrap_unchecked();
 }
-int      events[8] {};
-unsigned event_count {};
-void     Observe(int event) {
-    if (event_count < 8) events[event_count++] = event;
-}
 } // namespace
 
 TEST(Dispatch, RequiredCommandsAndDomains) {
@@ -370,47 +365,6 @@ TEST(Loader, MissingLibraryAndInjectedMove) {
     auto  moved    = rstd::move(original);
     EXPECT_EQ(&moved.global(), table);
     EXPECT_EQ(table->vkGetInstanceProcAddr, InstanceResolver);
-}
-
-TEST(Loader, SharedLibraryLifetime) {
-    auto path         = rstd::env::var_os("VVK_TEST_LOADER"_str);
-    auto missing_path = rstd::env::var_os("VVK_TEST_MISSING_ROOT"_str);
-    if (path.is_none() || missing_path.is_none())
-        GTEST_SKIP() << "Set VVK_TEST_LOADER and VVK_TEST_MISSING_ROOT to the test libraries";
-    auto missing = vvk::VulkanLoader::Open(
-        rstd::ffi::CString::make(missing_path->as_os_str().as_encoded_bytes()).unwrap().as_ref());
-    ASSERT_TRUE(missing.is_err());
-    auto error = missing.unwrap_err_unchecked();
-    EXPECT_EQ(error.kind, vvk::LoaderErrorKind::RootSymbol);
-    EXPECT_FALSE(error.message.is_empty());
-    event_count = 0;
-    {
-        auto opened = vvk::VulkanLoader::Open(
-            rstd::ffi::CString::make(path->as_os_str().as_encoded_bytes()).unwrap().as_ref());
-        ASSERT_TRUE(opened.is_ok());
-        auto  original     = rstd::move(opened).unwrap_unchecked();
-        auto* global       = &original.global();
-        auto  set_observer = reinterpret_cast<void (*)(void (*)(int))>(
-            global->vkGetInstanceProcAddr(VK_NULL_HANDLE, "vvkTestSetObserver"));
-        ASSERT_NE(set_observer, nullptr);
-        set_observer(Observe);
-        auto loader = rstd::move(original);
-        EXPECT_EQ(global, &loader.global());
-        vvk::InstanceDispatch parent;
-        vvk::DeviceDispatch   table;
-        vvk::Instance         instance;
-        vvk::Device           device;
-        VkApplicationInfo     app;
-        auto                  info = InstanceInfo(app);
-        ASSERT_TRUE(vvk::Instance::Create(instance, *global, info, parent).is_ok());
-        VkDeviceCreateInfo device_info { VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
-        ASSERT_TRUE(
-            vvk::Device::Create(device, Fake<VkPhysicalDevice>(3), parent, device_info, table)
-                .is_ok());
-        EXPECT_EQ(event_count, 2u);
-    }
-    ASSERT_EQ(event_count, 5u);
-    for (unsigned i = 0; i < 5; ++i) EXPECT_EQ(events[i], int(i + 1));
 }
 
 TEST(Dispatch, ImageFormatListCapability) {

@@ -23,11 +23,6 @@ pub = true
 [dependencies.rstd-log]
 version = "0.1.0"
 
-[external-dependencies.pkg-config.vulkan]
-module = "vulkan"
-usage = "compile"
-pub = true
-
 [[test]]
 name = "vvk-memory-tests"
 sources = ["tests/main.cpp", "tests/memory.cpp", "tests/memory_vulkan.cpp", "tests/memory_import.cpp", "tests/dispatch.cpp", "tests/format.cpp"]
