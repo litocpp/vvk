@@ -183,7 +183,7 @@ public:
     static auto Create(Device&, VkPhysicalDevice, const InstanceDispatch&,
                        const VkDeviceCreateInfo&, DeviceDispatch&) -> Result<empty, DispatchError>;
 
-    Queue GetQueue(rstd::uint32_t family_index) const noexcept;
+    Queue GetQueue(rstd::uint32_t family_index, rstd::uint32_t queue_index = 0) const noexcept;
 
     VkMemoryRequirements GetImageMemoryRequirements(VkImage image) const noexcept;
     VkMemoryRequirements2

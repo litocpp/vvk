@@ -179,9 +179,9 @@ auto Device::Create(Device& output, VkPhysicalDevice physical, const InstanceDis
     return Ok(empty {});
 }
 
-Queue Device::GetQueue(rstd::uint32_t family_index) const noexcept {
+Queue Device::GetQueue(rstd::uint32_t family_index, rstd::uint32_t queue_index) const noexcept {
     VkQueue queue;
-    dld->vkGetDeviceQueue(handle, family_index, 0, &queue);
+    dld->vkGetDeviceQueue(handle, family_index, queue_index, &queue);
     return Queue(queue, *dld);
 }
 
