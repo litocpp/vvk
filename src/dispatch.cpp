@@ -308,6 +308,8 @@ auto LoadDevice(const InstanceDispatch& parent, VkDevice device, DeviceCapabilit
     LOAD(vkCreateFence);
     LOAD(vkCreateFramebuffer);
     LOAD(vkCreateGraphicsPipelines);
+    LOAD(vkCreatePipelineCache);
+    LOAD(vkGetPipelineCacheData);
     LOAD(vkCreateImage);
     LOAD(vkCreateImageView);
     LOAD(vkCreatePipelineLayout);
@@ -331,6 +333,7 @@ auto LoadDevice(const InstanceDispatch& parent, VkDevice device, DeviceCapabilit
     LOAD(vkDestroyImage);
     LOAD(vkDestroyImageView);
     LOAD(vkDestroyPipeline);
+    LOAD(vkDestroyPipelineCache);
     LOAD(vkDestroyPipelineLayout);
     LOAD(vkDestroyQueryPool);
     LOAD(vkDestroyRenderPass);

@@ -36,6 +36,9 @@ void Destroy(VkDevice device, VkBuffer handle, const DeviceDispatch& dld) noexce
 void Destroy(VkDevice device, VkPipeline handle, const DeviceDispatch& dld) noexcept {
     dld.vkDestroyPipeline(device, handle, nullptr);
 }
+void Destroy(VkDevice device, VkPipelineCache handle, const DeviceDispatch& dld) noexcept {
+    dld.vkDestroyPipelineCache(device, handle, nullptr);
+}
 void Destroy(VkDevice device, VkPipelineLayout handle, const DeviceDispatch& dld) noexcept {
     dld.vkDestroyPipelineLayout(device, handle, nullptr);
 }
@@ -352,20 +355,33 @@ VkResult Device::CreateSampler(const VkSamplerCreateInfo& ci, Sampler& sam) cons
     return res;
 }
 
-VkResult Device::CreateGraphicsPipeline(const VkGraphicsPipelineCreateInfo& ci,
-                                        Pipeline& pipeline) const noexcept {
+VkResult Device::CreateGraphicsPipeline(const VkGraphicsPipelineCreateInfo& ci, Pipeline& pipeline,
+                                        VkPipelineCache cache) const noexcept {
     VkPipeline object;
-    VkResult res = dld->vkCreateGraphicsPipelines(handle, VK_NULL_HANDLE, 1, &ci, nullptr, &object);
+    VkResult   res = dld->vkCreateGraphicsPipelines(handle, cache, 1, &ci, nullptr, &object);
     if (res == VK_SUCCESS) pipeline = Pipeline(object, handle, *dld);
     return res;
 }
 
-VkResult Device::CreateComputePipeline(const VkComputePipelineCreateInfo& ci,
-                                       Pipeline&                          pipeline) const noexcept {
+VkResult Device::CreateComputePipeline(const VkComputePipelineCreateInfo& ci, Pipeline& pipeline,
+                                       VkPipelineCache cache) const noexcept {
     VkPipeline vkpipeline;
-    auto res = dld->vkCreateComputePipelines(handle, VK_NULL_HANDLE, 1, &ci, nullptr, &vkpipeline);
+    auto       res = dld->vkCreateComputePipelines(handle, cache, 1, &ci, nullptr, &vkpipeline);
     if (res == VK_SUCCESS) pipeline = Pipeline(vkpipeline, handle, *dld);
     return res;
+}
+
+VkResult Device::CreatePipelineCache(const VkPipelineCacheCreateInfo& ci,
+                                     PipelineCache&                   cache) const noexcept {
+    VkPipelineCache object {};
+    auto            res = dld->vkCreatePipelineCache(handle, &ci, nullptr, &object);
+    if (res == VK_SUCCESS) cache = PipelineCache(object, handle, *dld);
+    return res;
+}
+
+VkResult Device::GetPipelineCacheData(VkPipelineCache cache, rstd::size_t* size,
+                                      void* data) const noexcept {
+    return dld->vkGetPipelineCacheData(handle, cache, size, data);
 }
 
 VkResult Buffer::BindMemory(VkDeviceMemory memory, VkDeviceSize offset) const noexcept {

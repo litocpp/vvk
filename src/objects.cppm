@@ -209,9 +209,12 @@ public:
     VkResult CreateCommandPool(const VkCommandPoolCreateInfo& ci, CommandPool&) const;
     VkResult CreateDescriptorSetLayout(const VkDescriptorSetLayoutCreateInfo& ci,
                                        DescriptorSetLayout&) const noexcept;
-    VkResult CreateGraphicsPipeline(const VkGraphicsPipelineCreateInfo& ci,
-                                    Pipeline&) const noexcept;
-    VkResult CreateComputePipeline(const VkComputePipelineCreateInfo& ci, Pipeline&) const noexcept;
+    VkResult CreateGraphicsPipeline(const VkGraphicsPipelineCreateInfo& ci, Pipeline&,
+                                    VkPipelineCache cache = VK_NULL_HANDLE) const noexcept;
+    VkResult CreateComputePipeline(const VkComputePipelineCreateInfo& ci, Pipeline&,
+                                   VkPipelineCache cache = VK_NULL_HANDLE) const noexcept;
+    VkResult CreatePipelineCache(const VkPipelineCacheCreateInfo&, PipelineCache&) const noexcept;
+    VkResult GetPipelineCacheData(VkPipelineCache, rstd::size_t*, void*) const noexcept;
 
     VkResult CreateRenderPass(const VkRenderPassCreateInfo& ci, RenderPass&) const noexcept;
 
