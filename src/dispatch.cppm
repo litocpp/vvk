@@ -63,23 +63,25 @@ struct GlobalDispatch {
 };
 
 struct InstanceDispatch {
-    VkInstance                                    instance {};
-    PFN_vkGetInstanceProcAddr                     resolver {};
-    InstanceCapabilities                          capabilities {};
-    PFN_vkDestroyInstance                         vkDestroyInstance {};
-    PFN_vkCreateDebugUtilsMessengerEXT            vkCreateDebugUtilsMessengerEXT {};
-    PFN_vkCreateDevice                            vkCreateDevice {};
-    PFN_vkDestroyDebugUtilsMessengerEXT           vkDestroyDebugUtilsMessengerEXT {};
-    PFN_vkDestroySurfaceKHR                       vkDestroySurfaceKHR {};
-    PFN_vkEnumerateDeviceExtensionProperties      vkEnumerateDeviceExtensionProperties {};
-    PFN_vkEnumeratePhysicalDevices                vkEnumeratePhysicalDevices {};
-    PFN_vkGetDeviceProcAddr                       vkGetDeviceProcAddr {};
-    PFN_vkGetPhysicalDeviceFeatures2              vkGetPhysicalDeviceFeatures2 {};
-    PFN_vkGetPhysicalDeviceFormatProperties       vkGetPhysicalDeviceFormatProperties {};
-    PFN_vkGetPhysicalDeviceMemoryProperties       vkGetPhysicalDeviceMemoryProperties {};
-    PFN_vkGetPhysicalDeviceMemoryProperties2      vkGetPhysicalDeviceMemoryProperties2 {};
-    PFN_vkGetPhysicalDeviceProperties             vkGetPhysicalDeviceProperties {};
-    PFN_vkGetPhysicalDeviceProperties2            vkGetPhysicalDeviceProperties2 {};
+    PFN_vkGetPhysicalDeviceCooperativeMatrixPropertiesKHR
+                                             vkGetPhysicalDeviceCooperativeMatrixPropertiesKHR {};
+    VkInstance                               instance {};
+    PFN_vkGetInstanceProcAddr                resolver {};
+    InstanceCapabilities                     capabilities {};
+    PFN_vkDestroyInstance                    vkDestroyInstance {};
+    PFN_vkCreateDebugUtilsMessengerEXT       vkCreateDebugUtilsMessengerEXT {};
+    PFN_vkCreateDevice                       vkCreateDevice {};
+    PFN_vkDestroyDebugUtilsMessengerEXT      vkDestroyDebugUtilsMessengerEXT {};
+    PFN_vkDestroySurfaceKHR                  vkDestroySurfaceKHR {};
+    PFN_vkEnumerateDeviceExtensionProperties vkEnumerateDeviceExtensionProperties {};
+    PFN_vkEnumeratePhysicalDevices           vkEnumeratePhysicalDevices {};
+    PFN_vkGetDeviceProcAddr                  vkGetDeviceProcAddr {};
+    PFN_vkGetPhysicalDeviceFeatures2         vkGetPhysicalDeviceFeatures2 {};
+    PFN_vkGetPhysicalDeviceFormatProperties  vkGetPhysicalDeviceFormatProperties {};
+    PFN_vkGetPhysicalDeviceMemoryProperties  vkGetPhysicalDeviceMemoryProperties {};
+    PFN_vkGetPhysicalDeviceMemoryProperties2 vkGetPhysicalDeviceMemoryProperties2 {};
+    PFN_vkGetPhysicalDeviceProperties        vkGetPhysicalDeviceProperties {};
+    PFN_vkGetPhysicalDeviceProperties2       vkGetPhysicalDeviceProperties2 {};
     PFN_vkGetPhysicalDeviceQueueFamilyProperties  vkGetPhysicalDeviceQueueFamilyProperties {};
     PFN_vkGetPhysicalDeviceQueueFamilyProperties2 vkGetPhysicalDeviceQueueFamilyProperties2 {};
     PFN_vkGetPhysicalDeviceSurfaceCapabilitiesKHR vkGetPhysicalDeviceSurfaceCapabilitiesKHR {};

@@ -88,6 +88,8 @@ class PhysicalDevice : public Handle<VkPhysicalDevice, NoOwnerLife, InstanceDisp
 
 public:
     VkPhysicalDeviceProperties GetProperties() const noexcept;
+    VkResult
+    GetCooperativeMatrixPropertiesKHR(rstd::vec::Vec<VkCooperativeMatrixPropertiesKHR>&) const;
 
     void GetProperties2KHR(VkPhysicalDeviceProperties2KHR&) const noexcept;
 

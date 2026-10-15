@@ -400,6 +400,31 @@ VkResult SwapchainKHR::GetImages(rstd::vec::Vec<VkImage>& images) const {
     return dld->vkGetSwapchainImagesKHR(owner, handle, &num, images.data());
 }
 
+VkResult PhysicalDevice::GetCooperativeMatrixPropertiesKHR(
+    rstd::vec::Vec<VkCooperativeMatrixPropertiesKHR>& output) const {
+    output.clear();
+    if (! dld->vkGetPhysicalDeviceCooperativeMatrixPropertiesKHR)
+        return VK_ERROR_EXTENSION_NOT_PRESENT;
+    for (;;) {
+        uint32_t count = 0;
+        auto     result =
+            dld->vkGetPhysicalDeviceCooperativeMatrixPropertiesKHR(handle, &count, nullptr);
+        if (result != VK_SUCCESS && result != VK_INCOMPLETE) return result;
+        if (! count) return VK_SUCCESS;
+        rstd::vec::Vec<VkCooperativeMatrixPropertiesKHR> properties;
+        properties.resize(usize(count),
+                          VkCooperativeMatrixPropertiesKHR {
+                              VK_STRUCTURE_TYPE_COOPERATIVE_MATRIX_PROPERTIES_KHR });
+        result = dld->vkGetPhysicalDeviceCooperativeMatrixPropertiesKHR(
+            handle, &count, properties.data());
+        if (result == VK_INCOMPLETE) continue;
+        if (result != VK_SUCCESS) return result;
+        properties.truncate(usize(count));
+        output = rstd::move(properties);
+        return VK_SUCCESS;
+    }
+}
+
 VkPhysicalDeviceProperties PhysicalDevice::GetProperties() const noexcept {
     VkPhysicalDeviceProperties2 props {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,

@@ -203,6 +203,10 @@ auto LoadInstance(const GlobalDispatch& global, VkInstance instance, InstanceCap
         LOAD(vkGetPhysicalDeviceSurfaceSupportKHR);
     }
     LOAD(vkGetPhysicalDeviceImageFormatProperties);
+    result.vkGetPhysicalDeviceCooperativeMatrixPropertiesKHR =
+        reinterpret_cast<PFN_vkGetPhysicalDeviceCooperativeMatrixPropertiesKHR>(
+            global.vkGetInstanceProcAddr(instance,
+                                         "vkGetPhysicalDeviceCooperativeMatrixPropertiesKHR"));
 #undef LOAD
     return Ok(result);
 }
