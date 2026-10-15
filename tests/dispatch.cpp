@@ -17,6 +17,7 @@ struct ResolverState {
     const char*           missing {};
     const char*           queries[512] {};
     unsigned              query_count {}, instance_destroyed {}, device_destroyed {}, calls[2] {};
+    unsigned              shader_destroyed {}, shader_bound {}, push_data {}, submit2 {};
     VkInstance            expected_instance { Fake<VkInstance>(1) };
     VkDevice              expected_device { Fake<VkDevice>(11) };
     VkResult              create_result { VK_SUCCESS };
@@ -54,6 +55,38 @@ void VKAPI_CALL DestroyDevice(VkDevice device, const VkAllocationCallbacks*) {
     EXPECT_EQ(device, state.expected_device);
     ++state.device_destroyed;
 }
+VkResult VKAPI_CALL CreateShaders(VkDevice device, uint32_t count, const VkShaderCreateInfoEXT*,
+                                  const VkAllocationCallbacks*, VkShaderEXT* out) {
+    EXPECT_EQ(device, state.expected_device);
+    EXPECT_EQ(count, 1u);
+    *out = Fake<VkShaderEXT>(33);
+    return state.create_result;
+}
+void VKAPI_CALL DestroyShader(VkDevice device, VkShaderEXT shader, const VkAllocationCallbacks*) {
+    EXPECT_EQ(device, state.expected_device);
+    EXPECT_EQ(shader, Fake<VkShaderEXT>(33));
+    ++state.shader_destroyed;
+}
+void VKAPI_CALL BindShaders(VkCommandBuffer command, uint32_t count,
+                            const VkShaderStageFlagBits* stages, const VkShaderEXT* shaders) {
+    EXPECT_EQ(command, Fake<VkCommandBuffer>(44));
+    EXPECT_EQ(count, 1u);
+    EXPECT_EQ(stages[0], VK_SHADER_STAGE_COMPUTE_BIT);
+    EXPECT_EQ(shaders[0], Fake<VkShaderEXT>(33));
+    ++state.shader_bound;
+}
+void VKAPI_CALL PushData(VkCommandBuffer command, const VkPushDataInfoEXT* info) {
+    EXPECT_EQ(command, Fake<VkCommandBuffer>(44));
+    EXPECT_EQ(info->data.size, 32u);
+    ++state.push_data;
+}
+VkResult VKAPI_CALL Submit2(VkQueue queue, uint32_t count, const VkSubmitInfo2*, VkFence fence) {
+    EXPECT_EQ(queue, Fake<VkQueue>(55));
+    EXPECT_EQ(count, 1u);
+    EXPECT_EQ(fence, VK_NULL_HANDLE);
+    ++state.submit2;
+    return VK_SUCCESS;
+}
 void VKAPI_CALL Properties(VkPhysicalDevice, VkPhysicalDeviceProperties* out) {
     out->apiVersion = VK_API_VERSION_1_3;
 }
@@ -80,6 +113,16 @@ PFN_vkVoidFunction VKAPI_CALL DeviceResolver(VkDevice device, const char* name) 
     EXPECT_EQ(device, state.expected_device);
     EXPECT_FALSE(InstanceCommand(name));
     if (! state.record(name)) return nullptr;
+    const auto command = rstd::ffi::CStr::from_ptr(name).to_str().unwrap();
+    if (command == "vkCreateShadersEXT"_str)
+        return reinterpret_cast<PFN_vkVoidFunction>(CreateShaders);
+    if (command == "vkDestroyShaderEXT"_str)
+        return reinterpret_cast<PFN_vkVoidFunction>(DestroyShader);
+    if (command == "vkCmdBindShadersEXT"_str)
+        return reinterpret_cast<PFN_vkVoidFunction>(BindShaders);
+    if (command == "vkCmdPushDataEXT"_str) return reinterpret_cast<PFN_vkVoidFunction>(PushData);
+    if (command == "vkQueueSubmit2"_str || command == "vkQueueSubmit2KHR"_str)
+        return reinterpret_cast<PFN_vkVoidFunction>(Submit2);
     if ((rstd::ffi::CStr::from_ptr(name).to_bytes() ==
          rstd::ffi::CStr::from_ptr("vkDestroyDevice").to_bytes()))
         return reinterpret_cast<PFN_vkVoidFunction>(DestroyDevice);
@@ -186,6 +229,7 @@ TEST(Dispatch, VersionFeaturesAndLegalAliases) {
     ASSERT_TRUE(core.is_ok());
     EXPECT_TRUE(state.queried("vkWaitSemaphores"));
     EXPECT_TRUE(state.queried("vkCmdPipelineBarrier2"));
+    EXPECT_TRUE(state.queried("vkQueueSubmit2"));
     EXPECT_FALSE(state.queried("vkWaitSemaphoresKHR"));
     EXPECT_FALSE(state.queried("vkCmdPipelineBarrier2KHR"));
     parent.capabilities.api_version = VK_API_VERSION_1_1;
@@ -202,6 +246,7 @@ TEST(Dispatch, VersionFeaturesAndLegalAliases) {
     ASSERT_TRUE(extension.is_ok());
     EXPECT_TRUE(state.queried("vkWaitSemaphoresKHR"));
     EXPECT_TRUE(state.queried("vkCmdPipelineBarrier2KHR"));
+    EXPECT_TRUE(state.queried("vkQueueSubmit2KHR"));
     EXPECT_FALSE(state.queried("vkWaitSemaphores"));
     EXPECT_FALSE(state.queried("vkCmdPipelineBarrier2"));
     state.missing = "vkWaitSemaphoresKHR";
@@ -467,4 +512,147 @@ TEST(Dispatch, BufferAddressExtensionDoesNotEnableFeature) {
     EXPECT_FALSE(vvk::ParseDeviceCapabilities(info, parent.capabilities, VK_API_VERSION_1_1)
                      .unwrap_unchecked()
                      .buffer_device_address);
+}
+
+TEST(Dispatch, ModernComputeFeaturesAndConditionalCommands) {
+    state                           = {};
+    auto parent                     = Parent();
+    parent.capabilities.api_version = VK_API_VERSION_1_4;
+    VkPhysicalDeviceFeatures2 basic { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
+    basic.features.shaderInt64 = VK_TRUE;
+    VkPhysicalDeviceVulkan12Features twelve {
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES
+    };
+    twelve.vulkanMemoryModel            = VK_TRUE;
+    twelve.vulkanMemoryModelDeviceScope = VK_TRUE;
+    VkPhysicalDeviceVulkan13Features thirteen {
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES
+    };
+    thirteen.subgroupSizeControl  = VK_TRUE;
+    thirteen.computeFullSubgroups = VK_TRUE;
+    thirteen.synchronization2     = VK_TRUE;
+    VkPhysicalDeviceShaderObjectFeaturesEXT shader {
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_OBJECT_FEATURES_EXT
+    };
+    shader.shaderObject = VK_TRUE;
+    VkPhysicalDeviceDescriptorHeapFeaturesEXT heap {
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_HEAP_FEATURES_EXT
+    };
+    heap.descriptorHeap        = VK_TRUE;
+    basic.pNext                = &twelve;
+    twelve.pNext               = &thirteen;
+    thirteen.pNext             = &shader;
+    shader.pNext               = &heap;
+    const char*        names[] = { VK_EXT_SHADER_OBJECT_EXTENSION_NAME,
+                                   VK_EXT_DESCRIPTOR_HEAP_EXTENSION_NAME };
+    VkDeviceCreateInfo info { VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
+    info.pNext = &basic;
+    EXPECT_TRUE(
+        vvk::ParseDeviceCapabilities(info, parent.capabilities, VK_API_VERSION_1_4).is_err());
+    info.enabledExtensionCount   = 2;
+    info.ppEnabledExtensionNames = names;
+    auto parsed = vvk::ParseDeviceCapabilities(info, parent.capabilities, VK_API_VERSION_1_4);
+    ASSERT_TRUE(parsed.is_ok());
+    auto caps = parsed.unwrap_unchecked();
+    EXPECT_TRUE(caps.shader_int64);
+    EXPECT_TRUE(caps.vulkan_memory_model);
+    EXPECT_TRUE(caps.vulkan_memory_model_device_scope);
+    EXPECT_TRUE(caps.subgroup_size_control);
+    EXPECT_TRUE(caps.compute_full_subgroups);
+    EXPECT_TRUE(caps.shader_object);
+    EXPECT_TRUE(caps.descriptor_heap);
+    auto loaded = vvk::LoadDevice(parent, state.expected_device, caps);
+    ASSERT_TRUE(loaded.is_ok());
+    EXPECT_TRUE(state.queried("vkCreateShadersEXT"));
+    EXPECT_TRUE(state.queried("vkDestroyShaderEXT"));
+    EXPECT_TRUE(state.queried("vkCmdBindShadersEXT"));
+    EXPECT_TRUE(state.queried("vkCmdPushDataEXT"));
+    const char* commands[] = { "vkCreateShadersEXT",
+                               "vkDestroyShaderEXT",
+                               "vkCmdBindShadersEXT",
+                               "vkCmdPushDataEXT",
+                               "vkQueueSubmit2" };
+    for (auto missing : commands) {
+        state.missing = missing;
+        auto failed   = vvk::LoadDevice(parent, state.expected_device, caps);
+        ASSERT_TRUE(failed.is_err());
+        EXPECT_EQ(failed.unwrap_err_unchecked().kind, vvk::DispatchErrorKind::MissingCommand);
+        EXPECT_TRUE(rstd::ffi::CStr::from_ptr(failed.unwrap_err_unchecked().command).to_bytes() ==
+                    rstd::ffi::CStr::from_ptr(missing).to_bytes());
+    }
+    state.missing     = nullptr;
+    state.query_count = 0;
+    info.pNext        = nullptr;
+    auto disabled     = vvk::ParseDeviceCapabilities(info, parent.capabilities, VK_API_VERSION_1_4)
+                            .unwrap_unchecked();
+    auto no_features  = vvk::LoadDevice(parent, state.expected_device, disabled);
+    ASSERT_TRUE(no_features.is_ok());
+    EXPECT_FALSE(state.queried("vkCreateShadersEXT"));
+    EXPECT_FALSE(state.queried("vkCmdPushDataEXT"));
+    EXPECT_EQ(no_features.unwrap_unchecked().vkQueueSubmit2, nullptr);
+    VkPhysicalDeviceFeatures plain {};
+    plain.shaderInt64     = VK_TRUE;
+    info.pEnabledFeatures = &plain;
+    EXPECT_TRUE(vvk::ParseDeviceCapabilities(info, parent.capabilities, VK_API_VERSION_1_4)
+                    .unwrap_unchecked()
+                    .shader_int64);
+    VkPhysicalDeviceVulkanMemoryModelFeatures model {
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_MEMORY_MODEL_FEATURES
+    };
+    model.vulkanMemoryModel = VK_TRUE;
+    VkPhysicalDeviceSubgroupSizeControlFeatures subgroups {
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_SIZE_CONTROL_FEATURES
+    };
+    subgroups.subgroupSizeControl  = VK_TRUE;
+    subgroups.computeFullSubgroups = VK_TRUE;
+    model.pNext                    = &subgroups;
+    info.pNext                     = &model;
+    auto separate = vvk::ParseDeviceCapabilities(info, parent.capabilities, VK_API_VERSION_1_4)
+                        .unwrap_unchecked();
+    EXPECT_TRUE(separate.vulkan_memory_model);
+    EXPECT_TRUE(separate.subgroup_size_control);
+    EXPECT_TRUE(separate.compute_full_subgroups);
+}
+
+TEST(Dispatch, ShaderOwnershipAndComputeWrappers) {
+    state                          = {};
+    auto                    parent = Parent();
+    vvk::DeviceCapabilities caps;
+    caps.shader_object = caps.shader_object_extension = true;
+    caps.descriptor_heap = caps.descriptor_heap_extension = true;
+    caps.synchronization2                                 = true;
+    caps.api_version                                      = VK_API_VERSION_1_3;
+    auto        dispatch = vvk::LoadDevice(parent, state.expected_device, caps).unwrap_unchecked();
+    vvk::Device device(state.expected_device, dispatch, vvk::borrowed_handle);
+    vvk::ShaderEXT        shader;
+    VkShaderCreateInfoEXT info { VK_STRUCTURE_TYPE_SHADER_CREATE_INFO_EXT };
+    EXPECT_EQ(device.CreateShaderEXT(info, shader), VK_SUCCESS);
+    vvk::CommandBuffer command(Fake<VkCommandBuffer>(44), dispatch);
+    EXPECT_EQ(command.BindShaderEXT(VK_SHADER_STAGE_COMPUTE_BIT, *shader), VK_SUCCESS);
+    VkPushDataInfoEXT push { VK_STRUCTURE_TYPE_PUSH_DATA_INFO_EXT };
+    push.data.size = 32;
+    EXPECT_EQ(command.PushDataEXT(push), VK_SUCCESS);
+    vvk::Queue    queue(Fake<VkQueue>(55), dispatch);
+    VkSubmitInfo2 submit { VK_STRUCTURE_TYPE_SUBMIT_INFO_2 };
+    EXPECT_EQ(queue.Submit2(submit), VK_SUCCESS);
+    EXPECT_EQ(state.shader_bound, 1u);
+    EXPECT_EQ(state.push_data, 1u);
+    EXPECT_EQ(state.submit2, 1u);
+    vvk::ShaderEXT moved = rstd::move(shader);
+    EXPECT_FALSE(static_cast<bool>(shader));
+    moved.reset();
+    EXPECT_EQ(state.shader_destroyed, 1u);
+    state.create_result = VK_ERROR_OUT_OF_DEVICE_MEMORY;
+    EXPECT_EQ(device.CreateShaderEXT(info, shader), VK_ERROR_OUT_OF_DEVICE_MEMORY);
+    EXPECT_TRUE(static_cast<bool>(shader));
+    shader.reset();
+    EXPECT_EQ(state.shader_destroyed, 2u);
+    dispatch.capabilities.shader_object    = false;
+    dispatch.capabilities.descriptor_heap  = false;
+    dispatch.capabilities.synchronization2 = false;
+    EXPECT_EQ(device.CreateShaderEXT(info, shader), VK_ERROR_FEATURE_NOT_PRESENT);
+    EXPECT_EQ(command.BindShaderEXT(VK_SHADER_STAGE_COMPUTE_BIT, Fake<VkShaderEXT>(33)),
+              VK_ERROR_FEATURE_NOT_PRESENT);
+    EXPECT_EQ(command.PushDataEXT(push), VK_ERROR_FEATURE_NOT_PRESENT);
+    EXPECT_EQ(queue.Submit2(submit), VK_ERROR_FEATURE_NOT_PRESENT);
 }

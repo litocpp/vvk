@@ -66,6 +66,9 @@ void Destroy(VkDevice device, VkDeviceMemory handle, const DeviceDispatch& dld) 
 void Destroy(VkDevice device, VkShaderModule handle, const DeviceDispatch& dld) noexcept {
     dld.vkDestroyShaderModule(device, handle, nullptr);
 }
+void Destroy(VkDevice device, VkShaderEXT handle, const DeviceDispatch& dld) noexcept {
+    dld.vkDestroyShaderEXT(device, handle, nullptr);
+}
 
 void Destroy(VkDevice device, VkSwapchainKHR handle, const DeviceDispatch& dld) noexcept {
     dld.vkDestroySwapchainKHR(device, handle, nullptr);
@@ -304,6 +307,16 @@ VkResult Device::CreateShaderModule(const VkShaderModuleCreateInfo& ci,
     VkResult       res = dld->vkCreateShaderModule(handle, &ci, nullptr, &object);
     if (res == VK_SUCCESS) sm = ShaderModule(object, handle, *dld);
     return res;
+}
+
+VkResult Device::CreateShaderEXT(const VkShaderCreateInfoEXT& ci,
+                                 ShaderEXT&                   shader) const noexcept {
+    if (! dld->capabilities.shader_object) return VK_ERROR_FEATURE_NOT_PRESENT;
+    VkShaderEXT object = VK_NULL_HANDLE;
+    const auto  result = dld->vkCreateShadersEXT(handle, 1, &ci, nullptr, &object);
+    // Vulkan may return owned shaders even when the batch creation fails.
+    if (object) shader = ShaderEXT(object, handle, *dld);
+    return result;
 }
 
 VkResult Device::CreateSemaphore(const VkSemaphoreCreateInfo& ci, Semaphore& sm) const noexcept {

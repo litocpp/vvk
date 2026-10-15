@@ -31,5 +31,9 @@ sources = ["tests/main.cpp", "tests/memory.cpp", "tests/memory_vulkan.cpp", "tes
 rstd-test = { version = "0.1.0" }
 
 [[test]]
+name = "vvk-compute-tests"
+sources = ["tests/main.cpp", "tests/dispatch.cpp"]
+
+[[test]]
 name = "vvk-matrix-tests"
 sources = ["tests/main.cpp", "tests/matrix.cpp"]

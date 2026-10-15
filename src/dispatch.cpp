@@ -67,8 +67,41 @@ auto ParseDeviceCapabilities(const VkDeviceCreateInfo& info, const InstanceCapab
     caps.external_semaphore_fd           = enabled("VK_KHR_external_semaphore_fd");
     caps.drm_format_modifier             = enabled("VK_EXT_image_drm_format_modifier");
     caps.pipeline_executable_extension   = enabled("VK_KHR_pipeline_executable_properties");
+    caps.vulkan_memory_model_extension   = enabled("VK_KHR_vulkan_memory_model");
+    caps.subgroup_size_control_extension = enabled("VK_EXT_subgroup_size_control");
+    caps.shader_object_extension         = enabled("VK_EXT_shader_object");
+    caps.descriptor_heap_extension       = enabled("VK_EXT_descriptor_heap");
+    caps.shader_int64 = info.pEnabledFeatures && info.pEnabledFeatures->shaderInt64;
     for (auto* next = static_cast<const VkBaseInStructure*>(info.pNext); next; next = next->pNext) {
         switch (next->sType) {
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2:
+            caps.shader_int64 =
+                reinterpret_cast<const VkPhysicalDeviceFeatures2*>(next)->features.shaderInt64;
+            break;
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_MEMORY_MODEL_FEATURES: {
+            const auto& features =
+                *reinterpret_cast<const VkPhysicalDeviceVulkanMemoryModelFeatures*>(next);
+            caps.vulkan_memory_model              = features.vulkanMemoryModel;
+            caps.vulkan_memory_model_device_scope = features.vulkanMemoryModelDeviceScope;
+            break;
+        }
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_SIZE_CONTROL_FEATURES: {
+            const auto& features =
+                *reinterpret_cast<const VkPhysicalDeviceSubgroupSizeControlFeatures*>(next);
+            caps.subgroup_size_control  = features.subgroupSizeControl;
+            caps.compute_full_subgroups = features.computeFullSubgroups;
+            break;
+        }
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_OBJECT_FEATURES_EXT:
+            caps.shader_object =
+                reinterpret_cast<const VkPhysicalDeviceShaderObjectFeaturesEXT*>(next)
+                    ->shaderObject;
+            break;
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_HEAP_FEATURES_EXT:
+            caps.descriptor_heap =
+                reinterpret_cast<const VkPhysicalDeviceDescriptorHeapFeaturesEXT*>(next)
+                    ->descriptorHeap;
+            break;
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES:
             caps.timeline_semaphore =
                 reinterpret_cast<const VkPhysicalDeviceTimelineSemaphoreFeatures*>(next)
@@ -99,6 +132,11 @@ auto ParseDeviceCapabilities(const VkDeviceCreateInfo& info, const InstanceCapab
                     ->bufferDeviceAddress;
             caps.timeline_semaphore =
                 reinterpret_cast<const VkPhysicalDeviceVulkan12Features*>(next)->timelineSemaphore;
+            caps.vulkan_memory_model =
+                reinterpret_cast<const VkPhysicalDeviceVulkan12Features*>(next)->vulkanMemoryModel;
+            caps.vulkan_memory_model_device_scope =
+                reinterpret_cast<const VkPhysicalDeviceVulkan12Features*>(next)
+                    ->vulkanMemoryModelDeviceScope;
             break;
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES:
             caps.synchronization2 =
@@ -108,6 +146,12 @@ auto ParseDeviceCapabilities(const VkDeviceCreateInfo& info, const InstanceCapab
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES:
             caps.synchronization2 =
                 reinterpret_cast<const VkPhysicalDeviceVulkan13Features*>(next)->synchronization2;
+            caps.subgroup_size_control =
+                reinterpret_cast<const VkPhysicalDeviceVulkan13Features*>(next)
+                    ->subgroupSizeControl;
+            caps.compute_full_subgroups =
+                reinterpret_cast<const VkPhysicalDeviceVulkan13Features*>(next)
+                    ->computeFullSubgroups;
             break;
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_EXECUTABLE_PROPERTIES_FEATURES_KHR:
             caps.pipeline_executable =
@@ -134,6 +178,20 @@ auto ParseDeviceCapabilities(const VkDeviceCreateInfo& info, const InstanceCapab
     if (caps.pipeline_executable && ! caps.pipeline_executable_extension)
         return Err(DispatchError {
             DispatchErrorKind::Unsupported, DispatchStage::Device, "pipelineExecutableInfo" });
+    if ((caps.vulkan_memory_model || caps.vulkan_memory_model_device_scope) &&
+        caps.api_version < VK_API_VERSION_1_2 && ! caps.vulkan_memory_model_extension)
+        return Err(DispatchError {
+            DispatchErrorKind::Unsupported, DispatchStage::Device, "vulkanMemoryModel" });
+    if ((caps.subgroup_size_control || caps.compute_full_subgroups) &&
+        caps.api_version < VK_API_VERSION_1_3 && ! caps.subgroup_size_control_extension)
+        return Err(DispatchError {
+            DispatchErrorKind::Unsupported, DispatchStage::Device, "subgroupSizeControl" });
+    if (caps.shader_object && ! caps.shader_object_extension)
+        return Err(DispatchError {
+            DispatchErrorKind::Unsupported, DispatchStage::Device, "shaderObject" });
+    if (caps.descriptor_heap && ! caps.descriptor_heap_extension)
+        return Err(DispatchError {
+            DispatchErrorKind::Unsupported, DispatchStage::Device, "descriptorHeap" });
     return Ok(caps);
 }
 
@@ -224,6 +282,12 @@ auto LoadDevice(const InstanceDispatch& parent, VkDevice device, DeviceCapabilit
         (caps.synchronization2 && caps.api_version < VK_API_VERSION_1_3 &&
          ! caps.synchronization2_extension) ||
         (caps.pipeline_executable && ! caps.pipeline_executable_extension) ||
+        ((caps.vulkan_memory_model || caps.vulkan_memory_model_device_scope) &&
+         caps.api_version < VK_API_VERSION_1_2 && ! caps.vulkan_memory_model_extension) ||
+        ((caps.subgroup_size_control || caps.compute_full_subgroups) &&
+         caps.api_version < VK_API_VERSION_1_3 && ! caps.subgroup_size_control_extension) ||
+        (caps.shader_object && ! caps.shader_object_extension) ||
+        (caps.descriptor_heap && ! caps.descriptor_heap_extension) ||
         (caps.swapchain && ! parent.capabilities.surface) ||
         caps.debug_utils != parent.capabilities.debug_utils)
         return Err(DispatchError {
@@ -259,6 +323,9 @@ auto LoadDevice(const InstanceDispatch& parent, VkDevice device, DeviceCapabilit
     LOAD(vkCmdBindDescriptorSets);
     LOAD(vkCmdBindIndexBuffer);
     LOAD(vkCmdBindPipeline);
+    if (caps.shader_object) {
+        LOAD(vkCmdBindShadersEXT);
+    }
     LOAD(vkCmdBindVertexBuffers);
     LOAD(vkCmdBlitImage);
     LOAD(vkCmdClearColorImage);
@@ -283,6 +350,9 @@ auto LoadDevice(const InstanceDispatch& parent, VkDevice device, DeviceCapabilit
                                                        : "vkCmdPipelineBarrier2KHR");
     }
     LOAD(vkCmdPushConstants);
+    if (caps.descriptor_heap) {
+        LOAD(vkCmdPushDataEXT);
+    }
     if (caps.push_descriptor) {
         LOAD(vkCmdPushDescriptorSetKHR);
     }
@@ -322,6 +392,9 @@ auto LoadDevice(const InstanceDispatch& parent, VkDevice device, DeviceCapabilit
     LOAD(vkCreateSampler);
     LOAD(vkCreateSemaphore);
     LOAD(vkCreateShaderModule);
+    if (caps.shader_object) {
+        LOAD(vkCreateShadersEXT);
+    }
     if (caps.swapchain) {
         LOAD(vkCreateSwapchainKHR);
     }
@@ -344,6 +417,9 @@ auto LoadDevice(const InstanceDispatch& parent, VkDevice device, DeviceCapabilit
     LOAD(vkDestroySampler);
     LOAD(vkDestroySemaphore);
     LOAD(vkDestroyShaderModule);
+    if (caps.shader_object) {
+        LOAD(vkDestroyShaderEXT);
+    }
     if (caps.swapchain) {
         LOAD(vkDestroySwapchainKHR);
     }
@@ -392,6 +468,10 @@ auto LoadDevice(const InstanceDispatch& parent, VkDevice device, DeviceCapabilit
     LOAD(vkInvalidateMappedMemoryRanges);
     LOAD(vkMapMemory);
     LOAD(vkQueueSubmit);
+    if (caps.synchronization2) {
+        LOAD_AS(vkQueueSubmit2,
+                caps.api_version >= VK_API_VERSION_1_3 ? "vkQueueSubmit2" : "vkQueueSubmit2KHR");
+    }
     LOAD(vkResetFences);
     LOAD(vkResetCommandBuffer);
     LOAD(vkUnmapMemory);

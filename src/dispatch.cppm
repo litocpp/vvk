@@ -50,6 +50,11 @@ struct DeviceCapabilities {
     bool           push_descriptor {}, external_memory_fd {}, external_semaphore_fd {},
         drm_format_modifier {};
     bool pipeline_executable {}, pipeline_executable_extension {};
+    bool shader_int64 {}, vulkan_memory_model {}, vulkan_memory_model_device_scope {};
+    bool vulkan_memory_model_extension {};
+    bool subgroup_size_control {}, compute_full_subgroups {}, subgroup_size_control_extension {};
+    bool shader_object {}, shader_object_extension {}, descriptor_heap {},
+        descriptor_heap_extension {};
 };
 
 // Tables borrow their resolver's library. Their address must remain stable while handles borrow
@@ -111,6 +116,7 @@ struct DeviceDispatch {
     PFN_vkCmdBindDescriptorSets                  vkCmdBindDescriptorSets {};
     PFN_vkCmdBindIndexBuffer                     vkCmdBindIndexBuffer {};
     PFN_vkCmdBindPipeline                        vkCmdBindPipeline {};
+    PFN_vkCmdBindShadersEXT                      vkCmdBindShadersEXT {};
     PFN_vkCmdBindVertexBuffers                   vkCmdBindVertexBuffers {};
     PFN_vkCmdBlitImage                           vkCmdBlitImage {};
     PFN_vkCmdClearColorImage                     vkCmdClearColorImage {};
@@ -129,6 +135,7 @@ struct DeviceDispatch {
     PFN_vkCmdPipelineBarrier                     vkCmdPipelineBarrier {};
     PFN_vkCmdPipelineBarrier2                    vkCmdPipelineBarrier2 {};
     PFN_vkCmdPushConstants                       vkCmdPushConstants {};
+    PFN_vkCmdPushDataEXT                         vkCmdPushDataEXT {};
     PFN_vkCmdPushDescriptorSetKHR                vkCmdPushDescriptorSetKHR {};
     PFN_vkCmdPushDescriptorSetWithTemplateKHR    vkCmdPushDescriptorSetWithTemplateKHR {};
     PFN_vkCmdResolveImage                        vkCmdResolveImage {};
@@ -163,6 +170,7 @@ struct DeviceDispatch {
     PFN_vkCreateSampler                          vkCreateSampler {};
     PFN_vkCreateSemaphore                        vkCreateSemaphore {};
     PFN_vkCreateShaderModule                     vkCreateShaderModule {};
+    PFN_vkCreateShadersEXT                       vkCreateShadersEXT {};
     PFN_vkCreateSwapchainKHR                     vkCreateSwapchainKHR {};
     PFN_vkDestroyBuffer                          vkDestroyBuffer {};
     PFN_vkDestroyBufferView                      vkDestroyBufferView {};
@@ -183,6 +191,7 @@ struct DeviceDispatch {
     PFN_vkDestroySampler                         vkDestroySampler {};
     PFN_vkDestroySemaphore                       vkDestroySemaphore {};
     PFN_vkDestroyShaderModule                    vkDestroyShaderModule {};
+    PFN_vkDestroyShaderEXT                       vkDestroyShaderEXT {};
     PFN_vkDestroySwapchainKHR                    vkDestroySwapchainKHR {};
     PFN_vkDeviceWaitIdle                         vkDeviceWaitIdle {};
     PFN_vkEndCommandBuffer                       vkEndCommandBuffer {};
@@ -210,6 +219,7 @@ struct DeviceDispatch {
     PFN_vkInvalidateMappedMemoryRanges           vkInvalidateMappedMemoryRanges {};
     PFN_vkMapMemory                              vkMapMemory {};
     PFN_vkQueueSubmit                            vkQueueSubmit {};
+    PFN_vkQueueSubmit2                           vkQueueSubmit2 {};
     PFN_vkResetFences                            vkResetFences {};
     PFN_vkResetCommandBuffer                     vkResetCommandBuffer {};
     PFN_vkUnmapMemory                            vkUnmapMemory {};
@@ -312,6 +322,7 @@ void Destroy(VkDevice, VkImage, const DeviceDispatch&) noexcept;
 void Destroy(VkDevice, VkImageView, const DeviceDispatch&) noexcept;
 void Destroy(VkDevice, VkDeviceMemory, const DeviceDispatch&) noexcept;
 void Destroy(VkDevice, VkShaderModule, const DeviceDispatch&) noexcept;
+void Destroy(VkDevice, VkShaderEXT, const DeviceDispatch&) noexcept;
 void Destroy(VkDevice, VkSwapchainKHR, const DeviceDispatch&) noexcept;
 void Destroy(VkDevice, VkSampler, const DeviceDispatch&) noexcept;
 void Destroy(VkDevice, VkSemaphore, const DeviceDispatch&) noexcept;

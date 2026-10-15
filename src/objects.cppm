@@ -74,6 +74,18 @@ public:
     VkResult Present(const VkPresentInfoKHR& present_info) const noexcept {
         return dld->vkQueuePresentKHR(handle, &present_info);
     }
+
+    VkResult Submit2(slice<VkSubmitInfo2> submit_infos,
+                     VkFence              fence = VK_NULL_HANDLE) const noexcept {
+        if (! dld->capabilities.synchronization2) return VK_ERROR_FEATURE_NOT_PRESENT;
+        return dld->vkQueueSubmit2(
+            handle, vk_count(submit_infos.len()), submit_infos.as_raw_ptr(), fence);
+    }
+
+    VkResult Submit2(const VkSubmitInfo2& submit_info,
+                     VkFence              fence = VK_NULL_HANDLE) const noexcept {
+        return Submit2(slice<VkSubmitInfo2>::from_raw_parts(&submit_info, usize(1)), fence);
+    }
 };
 
 class SwapchainKHR : public Handle<VkSwapchainKHR, VkDevice, DeviceDispatch> {
@@ -142,6 +154,10 @@ class Framebuffer : public Handle<VkFramebuffer, VkDevice, DeviceDispatch> {
 
 class ShaderModule : public Handle<VkShaderModule, VkDevice, DeviceDispatch> {
     using Handle<VkShaderModule, VkDevice, DeviceDispatch>::Handle;
+};
+
+class ShaderEXT : public Handle<VkShaderEXT, VkDevice, DeviceDispatch> {
+    using Handle<VkShaderEXT, VkDevice, DeviceDispatch>::Handle;
 };
 
 class Fence : public Handle<VkFence, VkDevice, DeviceDispatch> {
@@ -226,6 +242,7 @@ public:
     VkResult CreateSwapchainKHR(const VkSwapchainCreateInfoKHR& ci, SwapchainKHR&) const noexcept;
 
     VkResult CreateShaderModule(const VkShaderModuleCreateInfo& ci, ShaderModule&) const noexcept;
+    VkResult CreateShaderEXT(const VkShaderCreateInfoEXT& ci, ShaderEXT&) const noexcept;
 
     VkResult CreateSemaphore(const VkSemaphoreCreateInfo& ci, Semaphore&) const noexcept;
     VkResult GetSemaphoreFdKHR(const VkSemaphoreGetFdInfoKHR& gi, int* fd) const noexcept;
@@ -272,6 +289,26 @@ public:
     }
 
     void EndRenderPass() const noexcept { dld->vkCmdEndRenderPass(handle); }
+
+    VkResult BindShadersEXT(slice<VkShaderStageFlagBits> stages,
+                            slice<VkShaderEXT>           shaders) const noexcept {
+        if (! dld->capabilities.shader_object) return VK_ERROR_FEATURE_NOT_PRESENT;
+        rstd_assert(stages.len() == shaders.len());
+        dld->vkCmdBindShadersEXT(
+            handle, vk_count(stages.len()), stages.as_raw_ptr(), shaders.as_raw_ptr());
+        return VK_SUCCESS;
+    }
+
+    VkResult BindShaderEXT(VkShaderStageFlagBits stage, VkShaderEXT shader) const noexcept {
+        return BindShadersEXT(slice<VkShaderStageFlagBits>::from_raw_parts(&stage, usize(1)),
+                              slice<VkShaderEXT>::from_raw_parts(&shader, usize(1)));
+    }
+
+    VkResult PushDataEXT(const VkPushDataInfoEXT& info) const noexcept {
+        if (! dld->capabilities.descriptor_heap) return VK_ERROR_FEATURE_NOT_PRESENT;
+        dld->vkCmdPushDataEXT(handle, &info);
+        return VK_SUCCESS;
+    }
 
     void BeginQuery(VkQueryPool query_pool, rstd::uint32_t query,
                     VkQueryControlFlags flags) const noexcept {
