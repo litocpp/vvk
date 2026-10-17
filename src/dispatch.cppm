@@ -130,6 +130,8 @@ struct DeviceDispatch {
     PFN_vkCmdDrawIndexed                         vkCmdDrawIndexed {};
     PFN_vkCmdEndDebugUtilsLabelEXT               vkCmdEndDebugUtilsLabelEXT {};
     PFN_vkCmdEndQuery                            vkCmdEndQuery {};
+    PFN_vkCmdWriteTimestamp2                     vkCmdWriteTimestamp2 {};
+    PFN_vkCmdResetQueryPool                      vkCmdResetQueryPool {};
     PFN_vkCmdEndRenderPass                       vkCmdEndRenderPass {};
     PFN_vkCmdFillBuffer                          vkCmdFillBuffer {};
     PFN_vkCmdPipelineBarrier                     vkCmdPipelineBarrier {};
@@ -311,6 +313,7 @@ void Destroy(VkInstance, const InstanceDispatch&) noexcept;
 void Destroy(VkDevice, const DeviceDispatch&) noexcept;
 void Destroy(VkInstance, VkDebugUtilsMessengerEXT, const InstanceDispatch&) noexcept;
 void Destroy(VkInstance, VkSurfaceKHR, const InstanceDispatch&) noexcept;
+void Destroy(VkDevice, VkQueryPool, const DeviceDispatch&) noexcept;
 void Destroy(VkDevice, VkCommandPool, const DeviceDispatch&) noexcept;
 void Destroy(VkDevice, VkBuffer, const DeviceDispatch&) noexcept;
 void Destroy(VkDevice, VkPipeline, const DeviceDispatch&) noexcept;

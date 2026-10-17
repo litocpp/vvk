@@ -14,13 +14,13 @@ T Fake(unsigned value) {
     return reinterpret_cast<T>(static_cast<uintptr_t>(value));
 }
 struct ResolverState {
-    const char*           missing {};
-    const char*           queries[512] {};
-    unsigned              query_count {}, instance_destroyed {}, device_destroyed {}, calls[2] {};
-    unsigned              shader_destroyed {}, shader_bound {}, push_data {}, submit2 {};
-    VkInstance            expected_instance { Fake<VkInstance>(1) };
-    VkDevice              expected_device { Fake<VkDevice>(11) };
-    VkResult              create_result { VK_SUCCESS };
+    const char* missing {};
+    const char* queries[512] {};
+    unsigned    query_count {}, instance_destroyed {}, device_destroyed {}, calls[2] {};
+    unsigned    shader_destroyed {}, shader_bound {}, push_data {}, submit2 {}, timestamps {};
+    VkInstance  expected_instance { Fake<VkInstance>(1) };
+    VkDevice    expected_device { Fake<VkDevice>(11) };
+    VkResult    create_result { VK_SUCCESS };
     VkInstanceCreateFlags instance_flags {};
     bool                  queried(const char* name) const {
         for (unsigned i = 0; i < query_count; ++i)
@@ -87,6 +87,14 @@ VkResult VKAPI_CALL Submit2(VkQueue queue, uint32_t count, const VkSubmitInfo2*,
     ++state.submit2;
     return VK_SUCCESS;
 }
+void VKAPI_CALL Timestamp2(VkCommandBuffer command, VkPipelineStageFlags2 stage, VkQueryPool pool,
+                           uint32_t query) {
+    EXPECT_EQ(command, Fake<VkCommandBuffer>(44));
+    EXPECT_EQ(stage, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT);
+    EXPECT_EQ(pool, Fake<VkQueryPool>(66));
+    EXPECT_EQ(query, 1u);
+    ++state.timestamps;
+}
 void VKAPI_CALL Properties(VkPhysicalDevice, VkPhysicalDeviceProperties* out) {
     out->apiVersion = VK_API_VERSION_1_3;
 }
@@ -121,6 +129,8 @@ PFN_vkVoidFunction VKAPI_CALL DeviceResolver(VkDevice device, const char* name) 
     if (command == "vkCmdBindShadersEXT"_str)
         return reinterpret_cast<PFN_vkVoidFunction>(BindShaders);
     if (command == "vkCmdPushDataEXT"_str) return reinterpret_cast<PFN_vkVoidFunction>(PushData);
+    if (command == "vkCmdWriteTimestamp2"_str || command == "vkCmdWriteTimestamp2KHR"_str)
+        return reinterpret_cast<PFN_vkVoidFunction>(Timestamp2);
     if (command == "vkQueueSubmit2"_str || command == "vkQueueSubmit2KHR"_str)
         return reinterpret_cast<PFN_vkVoidFunction>(Submit2);
     if ((rstd::ffi::CStr::from_ptr(name).to_bytes() ==
@@ -189,6 +199,9 @@ TEST(Dispatch, RequiredCommandsAndDomains) {
     EXPECT_EQ(dispatch.vkQueuePresentKHR, nullptr);
     EXPECT_EQ(dispatch.vkWaitSemaphoresKHR, nullptr);
     EXPECT_EQ(dispatch.vkCmdPipelineBarrier2, nullptr);
+    EXPECT_EQ(dispatch.vkCmdWriteTimestamp2, nullptr);
+    EXPECT_FALSE(state.queried("vkCmdWriteTimestamp2"));
+    EXPECT_FALSE(state.queried("vkCmdWriteTimestamp2KHR"));
     EXPECT_FALSE(state.queried("vkWaitSemaphores"));
     EXPECT_FALSE(state.queried("vkCreateSwapchainKHR"));
     state.missing = "vkCreateInstance";
@@ -229,9 +242,11 @@ TEST(Dispatch, VersionFeaturesAndLegalAliases) {
     ASSERT_TRUE(core.is_ok());
     EXPECT_TRUE(state.queried("vkWaitSemaphores"));
     EXPECT_TRUE(state.queried("vkCmdPipelineBarrier2"));
+    EXPECT_TRUE(state.queried("vkCmdWriteTimestamp2"));
     EXPECT_TRUE(state.queried("vkQueueSubmit2"));
     EXPECT_FALSE(state.queried("vkWaitSemaphoresKHR"));
     EXPECT_FALSE(state.queried("vkCmdPipelineBarrier2KHR"));
+    EXPECT_FALSE(state.queried("vkCmdWriteTimestamp2KHR"));
     parent.capabilities.api_version = VK_API_VERSION_1_1;
     EXPECT_TRUE(
         vvk::ParseDeviceCapabilities(info, parent.capabilities, VK_API_VERSION_1_3).is_err());
@@ -246,9 +261,13 @@ TEST(Dispatch, VersionFeaturesAndLegalAliases) {
     ASSERT_TRUE(extension.is_ok());
     EXPECT_TRUE(state.queried("vkWaitSemaphoresKHR"));
     EXPECT_TRUE(state.queried("vkCmdPipelineBarrier2KHR"));
+    EXPECT_TRUE(state.queried("vkCmdWriteTimestamp2KHR"));
     EXPECT_TRUE(state.queried("vkQueueSubmit2KHR"));
     EXPECT_FALSE(state.queried("vkWaitSemaphores"));
     EXPECT_FALSE(state.queried("vkCmdPipelineBarrier2"));
+    EXPECT_FALSE(state.queried("vkCmdWriteTimestamp2"));
+    state.missing = "vkCmdWriteTimestamp2KHR";
+    EXPECT_TRUE(vvk::LoadDevice(parent, state.expected_device, parsed.unwrap_unchecked()).is_err());
     state.missing = "vkWaitSemaphoresKHR";
     EXPECT_TRUE(vvk::LoadDevice(parent, state.expected_device, parsed.unwrap_unchecked()).is_err());
     info.pNext    = nullptr;
@@ -567,11 +586,8 @@ TEST(Dispatch, ModernComputeFeaturesAndConditionalCommands) {
     EXPECT_TRUE(state.queried("vkDestroyShaderEXT"));
     EXPECT_TRUE(state.queried("vkCmdBindShadersEXT"));
     EXPECT_TRUE(state.queried("vkCmdPushDataEXT"));
-    const char* commands[] = { "vkCreateShadersEXT",
-                               "vkDestroyShaderEXT",
-                               "vkCmdBindShadersEXT",
-                               "vkCmdPushDataEXT",
-                               "vkQueueSubmit2" };
+    const char* commands[] = { "vkCreateShadersEXT", "vkDestroyShaderEXT", "vkCmdBindShadersEXT",
+                               "vkCmdPushDataEXT",   "vkQueueSubmit2",     "vkCmdWriteTimestamp2" };
     for (auto missing : commands) {
         state.missing = missing;
         auto failed   = vvk::LoadDevice(parent, state.expected_device, caps);
@@ -635,6 +651,10 @@ TEST(Dispatch, ShaderOwnershipAndComputeWrappers) {
     vvk::Queue    queue(Fake<VkQueue>(55), dispatch);
     VkSubmitInfo2 submit { VK_STRUCTURE_TYPE_SUBMIT_INFO_2 };
     EXPECT_EQ(queue.Submit2(submit), VK_SUCCESS);
+    EXPECT_EQ(
+        command.WriteTimestamp2(VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, Fake<VkQueryPool>(66), 1),
+        VK_SUCCESS);
+    EXPECT_EQ(state.timestamps, 1u);
     EXPECT_EQ(state.shader_bound, 1u);
     EXPECT_EQ(state.push_data, 1u);
     EXPECT_EQ(state.submit2, 1u);
@@ -655,4 +675,8 @@ TEST(Dispatch, ShaderOwnershipAndComputeWrappers) {
               VK_ERROR_FEATURE_NOT_PRESENT);
     EXPECT_EQ(command.PushDataEXT(push), VK_ERROR_FEATURE_NOT_PRESENT);
     EXPECT_EQ(queue.Submit2(submit), VK_ERROR_FEATURE_NOT_PRESENT);
+    EXPECT_EQ(
+        command.WriteTimestamp2(VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, Fake<VkQueryPool>(66), 1),
+        VK_ERROR_FEATURE_NOT_PRESENT);
+    EXPECT_EQ(state.timestamps, 1u);
 }

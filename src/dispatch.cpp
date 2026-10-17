@@ -341,10 +341,14 @@ auto LoadDevice(const InstanceDispatch& parent, VkDevice device, DeviceCapabilit
         LOAD(vkCmdEndDebugUtilsLabelEXT);
     }
     LOAD(vkCmdEndQuery);
+    LOAD(vkCmdResetQueryPool);
     LOAD(vkCmdEndRenderPass);
     LOAD(vkCmdFillBuffer);
     LOAD(vkCmdPipelineBarrier);
     if (caps.synchronization2) {
+        LOAD_AS(vkCmdWriteTimestamp2,
+                caps.api_version >= VK_API_VERSION_1_3 ? "vkCmdWriteTimestamp2"
+                                                       : "vkCmdWriteTimestamp2KHR");
         LOAD_AS(vkCmdPipelineBarrier2,
                 caps.api_version >= VK_API_VERSION_1_3 ? "vkCmdPipelineBarrier2"
                                                        : "vkCmdPipelineBarrier2KHR");

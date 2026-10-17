@@ -128,6 +128,17 @@ public:
     GetMemoryProperties(void* next_structures = nullptr) const noexcept;
 };
 
+class QueryPool : public Handle<VkQueryPool, VkDevice, DeviceDispatch> {
+    using Handle<VkQueryPool, VkDevice, DeviceDispatch>::Handle;
+
+public:
+    VkResult Results(rstd::uint32_t first, rstd::uint32_t count, usize bytes, void* data,
+                     VkDeviceSize stride, VkQueryResultFlags flags) const noexcept {
+        return dld->vkGetQueryPoolResults(
+            owner, handle, first, count, bytes.to_primitive(), data, stride, flags);
+    }
+};
+
 class CommandPool : public Handle<VkCommandPool, VkDevice, DeviceDispatch> {
     using Handle<VkCommandPool, VkDevice, DeviceDispatch>::Handle;
 
@@ -224,6 +235,12 @@ public:
     VkResult AllocateMemory(const VkMemoryAllocateInfo& ai, DeviceMemory&) const noexcept;
 
     VkResult CreateBuffer(const VkBufferCreateInfo& ci, Buffer&) const noexcept;
+    VkResult CreateQueryPool(const VkQueryPoolCreateInfo& ci, QueryPool& pool) const {
+        VkQueryPool value;
+        auto        result = dld->vkCreateQueryPool(handle, &ci, nullptr, &value);
+        if (result == VK_SUCCESS) pool = QueryPool(value, handle, *dld);
+        return result;
+    }
     VkResult CreateCommandPool(const VkCommandPoolCreateInfo& ci, CommandPool&) const;
     VkResult CreateDescriptorSetLayout(const VkDescriptorSetLayoutCreateInfo& ci,
                                        DescriptorSetLayout&) const noexcept;
@@ -310,6 +327,16 @@ public:
         return VK_SUCCESS;
     }
 
+    VkResult WriteTimestamp2(VkPipelineStageFlags2 stage, VkQueryPool pool,
+                             rstd::uint32_t query) const noexcept {
+        if (! dld->capabilities.synchronization2) return VK_ERROR_FEATURE_NOT_PRESENT;
+        dld->vkCmdWriteTimestamp2(handle, stage, pool, query);
+        return VK_SUCCESS;
+    }
+    void ResetQueryPool(VkQueryPool pool, rstd::uint32_t first,
+                        rstd::uint32_t count) const noexcept {
+        dld->vkCmdResetQueryPool(handle, pool, first, count);
+    }
     void BeginQuery(VkQueryPool query_pool, rstd::uint32_t query,
                     VkQueryControlFlags flags) const noexcept {
         dld->vkCmdBeginQuery(handle, query_pool, query, flags);

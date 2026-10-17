@@ -27,6 +27,9 @@ void Destroy(VkInstance Instance, VkDebugUtilsMessengerEXT handle,
     dld.vkDestroyDebugUtilsMessengerEXT(Instance, handle, nullptr);
 }
 
+void Destroy(VkDevice device, VkQueryPool handle, const DeviceDispatch& dld) noexcept {
+    dld.vkDestroyQueryPool(device, handle, nullptr);
+}
 void Destroy(VkDevice device, VkCommandPool handle, const DeviceDispatch& dld) noexcept {
     dld.vkDestroyCommandPool(device, handle, nullptr);
 }
