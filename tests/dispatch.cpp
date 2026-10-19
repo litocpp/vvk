@@ -18,11 +18,13 @@ struct ResolverState {
     const char* queries[512] {};
     unsigned    query_count {}, instance_destroyed {}, device_destroyed {}, calls[2] {};
     unsigned    shader_destroyed {}, shader_bound {}, push_data {}, submit2 {}, timestamps {};
-    VkInstance  expected_instance { Fake<VkInstance>(1) };
-    VkDevice    expected_device { Fake<VkDevice>(11) };
-    VkResult    create_result { VK_SUCCESS };
-    VkInstanceCreateFlags instance_flags {};
-    bool                  queried(const char* name) const {
+    unsigned    pool_resets {}, pool_destroyed {};
+    VkCommandPoolResetFlags pool_reset_flags {};
+    VkInstance              expected_instance { Fake<VkInstance>(1) };
+    VkDevice                expected_device { Fake<VkDevice>(11) };
+    VkResult                create_result { VK_SUCCESS };
+    VkInstanceCreateFlags   instance_flags {};
+    bool                    queried(const char* name) const {
         for (unsigned i = 0; i < query_count; ++i)
             if ((rstd::ffi::CStr::from_ptr(queries[i]).to_bytes() ==
                  rstd::ffi::CStr::from_ptr(name).to_bytes()))
@@ -36,6 +38,20 @@ struct ResolverState {
     }
 } state;
 void VKAPI_CALL     Uncalled() {}
+VkResult VKAPI_CALL ResetCommandPool(VkDevice device, VkCommandPool pool,
+                                     VkCommandPoolResetFlags flags) {
+    EXPECT_EQ(device, state.expected_device);
+    EXPECT_EQ(pool, Fake<VkCommandPool>(77));
+    ++state.pool_resets;
+    state.pool_reset_flags = flags;
+    return state.create_result;
+}
+void VKAPI_CALL DestroyCommandPool(VkDevice device, VkCommandPool pool,
+                                   const VkAllocationCallbacks*) {
+    EXPECT_EQ(device, state.expected_device);
+    EXPECT_EQ(pool, Fake<VkCommandPool>(77));
+    ++state.pool_destroyed;
+}
 VkResult VKAPI_CALL CreateInstance(const VkInstanceCreateInfo* info, const VkAllocationCallbacks*,
                                    VkInstance*                 out) {
     state.instance_flags = info->flags;
@@ -122,6 +138,10 @@ PFN_vkVoidFunction VKAPI_CALL DeviceResolver(VkDevice device, const char* name) 
     EXPECT_FALSE(InstanceCommand(name));
     if (! state.record(name)) return nullptr;
     const auto command = rstd::ffi::CStr::from_ptr(name).to_str().unwrap();
+    if (command == "vkResetCommandPool"_str)
+        return reinterpret_cast<PFN_vkVoidFunction>(ResetCommandPool);
+    if (command == "vkDestroyCommandPool"_str)
+        return reinterpret_cast<PFN_vkVoidFunction>(DestroyCommandPool);
     if (command == "vkCreateShadersEXT"_str)
         return reinterpret_cast<PFN_vkVoidFunction>(CreateShaders);
     if (command == "vkDestroyShaderEXT"_str)
@@ -220,6 +240,31 @@ TEST(Dispatch, RequiredCommandsAndDomains) {
     ASSERT_TRUE(bad_device.is_err());
     EXPECT_TRUE(rstd::ffi::CStr::from_ptr(bad_device.unwrap_err_unchecked().command).to_bytes() ==
                 rstd::ffi::CStr::from_ptr("vkAllocateMemory").to_bytes());
+}
+
+TEST(Dispatch, CommandPoolReset) {
+    state       = {};
+    auto parent = Parent();
+    auto loaded = vvk::LoadDevice(parent, state.expected_device, {});
+    ASSERT_TRUE(loaded.is_ok());
+    EXPECT_TRUE(state.queried("vkResetCommandPool"));
+    auto dispatch = loaded.unwrap_unchecked();
+    {
+        vvk::CommandPool pool(Fake<VkCommandPool>(77), state.expected_device, dispatch);
+        EXPECT_EQ(pool.Reset(), VK_SUCCESS);
+        EXPECT_EQ(state.pool_reset_flags, 0u);
+        state.create_result = VK_ERROR_OUT_OF_DEVICE_MEMORY;
+        EXPECT_EQ(pool.Reset(VK_COMMAND_POOL_RESET_RELEASE_RESOURCES_BIT),
+                  VK_ERROR_OUT_OF_DEVICE_MEMORY);
+        EXPECT_EQ(state.pool_reset_flags, VK_COMMAND_POOL_RESET_RELEASE_RESOURCES_BIT);
+        EXPECT_EQ(state.pool_resets, 2u);
+    }
+    EXPECT_EQ(state.pool_destroyed, 1u);
+    state.missing = "vkResetCommandPool";
+    auto failed   = vvk::LoadDevice(parent, state.expected_device, {});
+    ASSERT_TRUE(failed.is_err());
+    EXPECT_TRUE(rstd::ffi::CStr::from_ptr(failed.unwrap_err_unchecked().command).to_bytes() ==
+                rstd::ffi::CStr::from_ptr("vkResetCommandPool").to_bytes());
 }
 
 TEST(Dispatch, VersionFeaturesAndLegalAliases) {

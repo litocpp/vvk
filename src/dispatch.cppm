@@ -224,6 +224,7 @@ struct DeviceDispatch {
     PFN_vkQueueSubmit2                           vkQueueSubmit2 {};
     PFN_vkResetFences                            vkResetFences {};
     PFN_vkResetCommandBuffer                     vkResetCommandBuffer {};
+    PFN_vkResetCommandPool                       vkResetCommandPool {};
     PFN_vkUnmapMemory                            vkUnmapMemory {};
     PFN_vkUpdateDescriptorSetWithTemplateKHR     vkUpdateDescriptorSetWithTemplateKHR {};
     PFN_vkUpdateDescriptorSets                   vkUpdateDescriptorSets {};

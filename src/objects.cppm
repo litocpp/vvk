@@ -144,6 +144,9 @@ class CommandPool : public Handle<VkCommandPool, VkDevice, DeviceDispatch> {
 
 public:
     VkResult Allocate(usize num_buffers, VkCommandBufferLevel level, CommandBuffers&) const;
+    VkResult Reset(VkCommandPoolResetFlags flags = 0) const {
+        return dld->vkResetCommandPool(owner, handle, flags);
+    }
 };
 
 class DeviceMemory : public Handle<VkDeviceMemory, VkDevice, DeviceDispatch> {

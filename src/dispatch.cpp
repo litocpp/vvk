@@ -478,6 +478,7 @@ auto LoadDevice(const InstanceDispatch& parent, VkDevice device, DeviceCapabilit
     }
     LOAD(vkResetFences);
     LOAD(vkResetCommandBuffer);
+    LOAD(vkResetCommandPool);
     LOAD(vkUnmapMemory);
     LOAD_AS(vkUpdateDescriptorSetWithTemplateKHR, "vkUpdateDescriptorSetWithTemplate");
     LOAD(vkUpdateDescriptorSets);
