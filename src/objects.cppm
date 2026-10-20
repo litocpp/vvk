@@ -215,6 +215,15 @@ public:
     static auto Create(Device&, VkPhysicalDevice, const InstanceDispatch&,
                        const VkDeviceCreateInfo&, DeviceDispatch&) -> Result<empty, DispatchError>;
 
+    VkResult WriteResourceDescriptorsEXT(slice<VkResourceDescriptorInfoEXT> resources,
+                                         slice<VkHostAddressRangeEXT> destinations) const noexcept {
+        if (! dld->capabilities.descriptor_heap) return VK_ERROR_FEATURE_NOT_PRESENT;
+        rstd_assert(resources.len() == destinations.len());
+        if (resources.is_empty()) return VK_SUCCESS;
+        return dld->vkWriteResourceDescriptorsEXT(
+            handle, vk_count(resources.len()), resources.as_raw_ptr(), destinations.as_raw_ptr());
+    }
+
     Queue GetQueue(rstd::uint32_t family_index, rstd::uint32_t queue_index = 0) const noexcept;
 
     VkMemoryRequirements GetImageMemoryRequirements(VkImage image) const noexcept;
@@ -322,6 +331,12 @@ public:
     VkResult BindShaderEXT(VkShaderStageFlagBits stage, VkShaderEXT shader) const noexcept {
         return BindShadersEXT(slice<VkShaderStageFlagBits>::from_raw_parts(&stage, usize(1)),
                               slice<VkShaderEXT>::from_raw_parts(&shader, usize(1)));
+    }
+
+    VkResult BindResourceHeapEXT(const VkBindHeapInfoEXT& info) const noexcept {
+        if (! dld->capabilities.descriptor_heap) return VK_ERROR_FEATURE_NOT_PRESENT;
+        dld->vkCmdBindResourceHeapEXT(handle, &info);
+        return VK_SUCCESS;
     }
 
     VkResult PushDataEXT(const VkPushDataInfoEXT& info) const noexcept {

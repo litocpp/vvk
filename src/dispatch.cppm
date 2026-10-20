@@ -80,6 +80,7 @@ struct InstanceDispatch {
     PFN_vkDestroySurfaceKHR                  vkDestroySurfaceKHR {};
     PFN_vkEnumerateDeviceExtensionProperties vkEnumerateDeviceExtensionProperties {};
     PFN_vkEnumeratePhysicalDevices           vkEnumeratePhysicalDevices {};
+    PFN_vkGetPhysicalDeviceDescriptorSizeEXT vkGetPhysicalDeviceDescriptorSizeEXT {};
     PFN_vkGetDeviceProcAddr                  vkGetDeviceProcAddr {};
     PFN_vkGetPhysicalDeviceFeatures2         vkGetPhysicalDeviceFeatures2 {};
     PFN_vkGetPhysicalDeviceFormatProperties  vkGetPhysicalDeviceFormatProperties {};
@@ -138,6 +139,8 @@ struct DeviceDispatch {
     PFN_vkCmdPipelineBarrier2                    vkCmdPipelineBarrier2 {};
     PFN_vkCmdPushConstants                       vkCmdPushConstants {};
     PFN_vkCmdPushDataEXT                         vkCmdPushDataEXT {};
+    PFN_vkCmdBindResourceHeapEXT                 vkCmdBindResourceHeapEXT {};
+    PFN_vkWriteResourceDescriptorsEXT            vkWriteResourceDescriptorsEXT {};
     PFN_vkCmdPushDescriptorSetKHR                vkCmdPushDescriptorSetKHR {};
     PFN_vkCmdPushDescriptorSetWithTemplateKHR    vkCmdPushDescriptorSetWithTemplateKHR {};
     PFN_vkCmdResolveImage                        vkCmdResolveImage {};

@@ -237,6 +237,9 @@ auto LoadInstance(const GlobalDispatch& global, VkInstance instance, InstanceCap
     if (caps.surface) {
         LOAD(vkDestroySurfaceKHR);
     }
+    result.vkGetPhysicalDeviceDescriptorSizeEXT =
+        reinterpret_cast<PFN_vkGetPhysicalDeviceDescriptorSizeEXT>(
+            global.vkGetInstanceProcAddr(instance, "vkGetPhysicalDeviceDescriptorSizeEXT"));
     LOAD(vkEnumerateDeviceExtensionProperties);
     LOAD(vkEnumeratePhysicalDevices);
     LOAD(vkGetDeviceProcAddr);
@@ -356,6 +359,8 @@ auto LoadDevice(const InstanceDispatch& parent, VkDevice device, DeviceCapabilit
     LOAD(vkCmdPushConstants);
     if (caps.descriptor_heap) {
         LOAD(vkCmdPushDataEXT);
+        LOAD(vkCmdBindResourceHeapEXT);
+        LOAD(vkWriteResourceDescriptorsEXT);
     }
     if (caps.push_descriptor) {
         LOAD(vkCmdPushDescriptorSetKHR);

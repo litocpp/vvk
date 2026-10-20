@@ -18,6 +18,7 @@ struct ResolverState {
     const char* queries[512] {};
     unsigned    query_count {}, instance_destroyed {}, device_destroyed {}, calls[2] {};
     unsigned    shader_destroyed {}, shader_bound {}, push_data {}, submit2 {}, timestamps {};
+    unsigned    heap_bound {}, descriptors_written {};
     unsigned    pool_resets {}, pool_destroyed {};
     VkCommandPoolResetFlags pool_reset_flags {};
     VkInstance              expected_instance { Fake<VkInstance>(1) };
@@ -96,6 +97,17 @@ void VKAPI_CALL PushData(VkCommandBuffer command, const VkPushDataInfoEXT* info)
     EXPECT_EQ(info->data.size, 32u);
     ++state.push_data;
 }
+void VKAPI_CALL BindHeap(VkCommandBuffer command, const VkBindHeapInfoEXT*) {
+    EXPECT_EQ(command, Fake<VkCommandBuffer>(44));
+    ++state.heap_bound;
+}
+VkResult VKAPI_CALL WriteDescriptors(VkDevice device, uint32_t count,
+                                     const VkResourceDescriptorInfoEXT*,
+                                     const VkHostAddressRangeEXT*) {
+    EXPECT_EQ(device, state.expected_device);
+    state.descriptors_written += count;
+    return VK_SUCCESS;
+}
 VkResult VKAPI_CALL Submit2(VkQueue queue, uint32_t count, const VkSubmitInfo2*, VkFence fence) {
     EXPECT_EQ(queue, Fake<VkQueue>(55));
     EXPECT_EQ(count, 1u);
@@ -149,6 +161,10 @@ PFN_vkVoidFunction VKAPI_CALL DeviceResolver(VkDevice device, const char* name) 
     if (command == "vkCmdBindShadersEXT"_str)
         return reinterpret_cast<PFN_vkVoidFunction>(BindShaders);
     if (command == "vkCmdPushDataEXT"_str) return reinterpret_cast<PFN_vkVoidFunction>(PushData);
+    if (command == "vkCmdBindResourceHeapEXT"_str)
+        return reinterpret_cast<PFN_vkVoidFunction>(BindHeap);
+    if (command == "vkWriteResourceDescriptorsEXT"_str)
+        return reinterpret_cast<PFN_vkVoidFunction>(WriteDescriptors);
     if (command == "vkCmdWriteTimestamp2"_str || command == "vkCmdWriteTimestamp2KHR"_str)
         return reinterpret_cast<PFN_vkVoidFunction>(Timestamp2);
     if (command == "vkQueueSubmit2"_str || command == "vkQueueSubmit2KHR"_str)
@@ -631,8 +647,10 @@ TEST(Dispatch, ModernComputeFeaturesAndConditionalCommands) {
     EXPECT_TRUE(state.queried("vkDestroyShaderEXT"));
     EXPECT_TRUE(state.queried("vkCmdBindShadersEXT"));
     EXPECT_TRUE(state.queried("vkCmdPushDataEXT"));
-    const char* commands[] = { "vkCreateShadersEXT", "vkDestroyShaderEXT", "vkCmdBindShadersEXT",
-                               "vkCmdPushDataEXT",   "vkQueueSubmit2",     "vkCmdWriteTimestamp2" };
+    const char* commands[] = { "vkCreateShadersEXT",       "vkDestroyShaderEXT",
+                               "vkCmdBindShadersEXT",      "vkCmdPushDataEXT",
+                               "vkCmdBindResourceHeapEXT", "vkWriteResourceDescriptorsEXT",
+                               "vkQueueSubmit2",           "vkCmdWriteTimestamp2" };
     for (auto missing : commands) {
         state.missing = missing;
         auto failed   = vvk::LoadDevice(parent, state.expected_device, caps);
@@ -650,6 +668,8 @@ TEST(Dispatch, ModernComputeFeaturesAndConditionalCommands) {
     ASSERT_TRUE(no_features.is_ok());
     EXPECT_FALSE(state.queried("vkCreateShadersEXT"));
     EXPECT_FALSE(state.queried("vkCmdPushDataEXT"));
+    EXPECT_FALSE(state.queried("vkCmdBindResourceHeapEXT"));
+    EXPECT_FALSE(state.queried("vkWriteResourceDescriptorsEXT"));
     EXPECT_EQ(no_features.unwrap_unchecked().vkQueueSubmit2, nullptr);
     VkPhysicalDeviceFeatures plain {};
     plain.shaderInt64     = VK_TRUE;
@@ -693,6 +713,16 @@ TEST(Dispatch, ShaderOwnershipAndComputeWrappers) {
     VkPushDataInfoEXT push { VK_STRUCTURE_TYPE_PUSH_DATA_INFO_EXT };
     push.data.size = 32;
     EXPECT_EQ(command.PushDataEXT(push), VK_SUCCESS);
+    VkBindHeapInfoEXT heap_info { VK_STRUCTURE_TYPE_BIND_HEAP_INFO_EXT };
+    EXPECT_EQ(command.BindResourceHeapEXT(heap_info), VK_SUCCESS);
+    VkResourceDescriptorInfoEXT descriptor { VK_STRUCTURE_TYPE_RESOURCE_DESCRIPTOR_INFO_EXT };
+    VkHostAddressRangeEXT       destination {};
+    EXPECT_EQ(device.WriteResourceDescriptorsEXT(
+                  slice<VkResourceDescriptorInfoEXT>::from_raw_parts(&descriptor, usize(1)),
+                  slice<VkHostAddressRangeEXT>::from_raw_parts(&destination, usize(1))),
+              VK_SUCCESS);
+    EXPECT_EQ(state.heap_bound, 1u);
+    EXPECT_EQ(state.descriptors_written, 1u);
     vvk::Queue    queue(Fake<VkQueue>(55), dispatch);
     VkSubmitInfo2 submit { VK_STRUCTURE_TYPE_SUBMIT_INFO_2 };
     EXPECT_EQ(queue.Submit2(submit), VK_SUCCESS);
@@ -719,6 +749,8 @@ TEST(Dispatch, ShaderOwnershipAndComputeWrappers) {
     EXPECT_EQ(command.BindShaderEXT(VK_SHADER_STAGE_COMPUTE_BIT, Fake<VkShaderEXT>(33)),
               VK_ERROR_FEATURE_NOT_PRESENT);
     EXPECT_EQ(command.PushDataEXT(push), VK_ERROR_FEATURE_NOT_PRESENT);
+    EXPECT_EQ(command.BindResourceHeapEXT(heap_info), VK_ERROR_FEATURE_NOT_PRESENT);
+    EXPECT_EQ(device.WriteResourceDescriptorsEXT({}, {}), VK_ERROR_FEATURE_NOT_PRESENT);
     EXPECT_EQ(queue.Submit2(submit), VK_ERROR_FEATURE_NOT_PRESENT);
     EXPECT_EQ(
         command.WriteTimestamp2(VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, Fake<VkQueryPool>(66), 1),

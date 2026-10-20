@@ -1344,6 +1344,20 @@ TEST(Memory, InvalidAccessIntentRollsBack) {
     EXPECT_EQ(fake->creates, fake->destroys);
 }
 
+TEST(Memory, DescriptorHeapBuffer) {
+    FakeMemory context;
+    fake = &context;
+    auto allocator =
+        MakeAllocator(alloc::allocator_ref(alloc::GLOBAL), false, { 256, 1024, 0, true }, true)
+            .unwrap_unchecked();
+    auto info = BufferInfo(128);
+    info.usage |=
+        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_DESCRIPTOR_HEAP_BIT_EXT;
+    auto buffer = allocator.create_buffer(info);
+    ASSERT_TRUE(buffer.is_ok());
+    EXPECT_TRUE(buffer.unwrap_unchecked().device_address().is_ok());
+}
+
 TEST(Memory, BufferAddressCapabilityAndBlockIsolation) {
     FakeMemory context;
     fake      = &context;
