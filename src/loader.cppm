@@ -1,17 +1,21 @@
 module;
 #include <rstd/macro.hpp>
 export module vvk:loader;
-import rstd;
 import rstd.dlopn;
 export import :dispatch;
 using namespace rstd::prelude;
 
 namespace vvk
 {
+#if RSTD_OS_WINDOWS
+using NativeLibrary = rstd::dlopn::WindowsLibrary;
+#else
+using NativeLibrary = rstd::dlopn::Library;
+#endif
 struct LoaderState {
-    Option<rstd::dlopn::Library> library;
-    GlobalDispatch               global;
-    LoaderState(Option<rstd::dlopn::Library> library, GlobalDispatch global)
+    Option<NativeLibrary> library;
+    GlobalDispatch        global;
+    LoaderState(Option<NativeLibrary> library, GlobalDispatch global)
         : library(rstd::move(library)), global(global) {}
 };
 export enum class LoaderErrorKind { OpenLibrary, RootSymbol, Dispatch };
@@ -44,7 +48,7 @@ public:
         return Ok(VulkanLoader(Box<LoaderState>::make(None(), loaded.unwrap_unchecked())));
     }
     static auto Open(rstd::ref<rstd::ffi::CStr> path) -> Result<VulkanLoader, LoaderError> {
-        auto opened = rstd::dlopn::Library::open(path);
+        auto opened = NativeLibrary::open(path);
         if (opened.is_err())
             return Err(LoaderError { LoaderErrorKind::OpenLibrary,
                                      String::make(opened.unwrap_err_unchecked().message()) });
@@ -64,7 +68,9 @@ public:
             Box<LoaderState>::make(Some(rstd::move(library)), loaded.unwrap_unchecked())));
     }
     static auto Open() -> Result<VulkanLoader, LoaderError> {
-#if RSTD_OS_MACOS
+#if RSTD_OS_WINDOWS
+        return Open(rstd::ffi::CStr::from_ptr("vulkan-1.dll"));
+#elif RSTD_OS_MACOS
         return Open(rstd::ffi::CStr::from_ptr("libvulkan.1.dylib"));
 #else
         return Open(rstd::ffi::CStr::from_ptr("libvulkan.so.1"));

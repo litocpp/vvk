@@ -492,6 +492,19 @@ TEST(Loader, MissingLibraryAndInjectedMove) {
     EXPECT_EQ(table->vkGetInstanceProcAddr, InstanceResolver);
 }
 
+#if defined(_WIN32)
+TEST(Loader, WindowsLibraryPathAndMissingSymbol) {
+    auto invalid = vvk::VulkanLoader::Open(rstd::ffi::CStr::from_ptr("\xff"));
+    ASSERT_TRUE(invalid.is_err());
+    EXPECT_EQ(invalid.unwrap_err().kind, vvk::LoaderErrorKind::OpenLibrary);
+    auto system = vvk::VulkanLoader::Open(rstd::ffi::CStr::from_ptr("kernel32.dll"));
+    ASSERT_TRUE(system.is_err());
+    auto error = rstd::move(system).unwrap_err_unchecked();
+    EXPECT_EQ(error.kind, vvk::LoaderErrorKind::RootSymbol);
+    EXPECT_FALSE(error.message.is_empty());
+}
+#endif
+
 TEST(Dispatch, ImageFormatListCapability) {
     vvk::InstanceCapabilities parent;
     VkDeviceCreateInfo        info { VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
