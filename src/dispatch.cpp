@@ -436,6 +436,7 @@ auto LoadDevice(const InstanceDispatch& parent, VkDevice device, DeviceCapabilit
     LOAD(vkEndCommandBuffer);
     LOAD(vkFreeCommandBuffers);
     LOAD(vkFreeDescriptorSets);
+    LOAD(vkResetDescriptorPool);
     LOAD(vkFreeMemory);
     LOAD(vkGetBufferMemoryRequirements2);
     LOAD(vkGetDeviceQueue);

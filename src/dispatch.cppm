@@ -202,6 +202,7 @@ struct DeviceDispatch {
     PFN_vkEndCommandBuffer                       vkEndCommandBuffer {};
     PFN_vkFreeCommandBuffers                     vkFreeCommandBuffers {};
     PFN_vkFreeDescriptorSets                     vkFreeDescriptorSets {};
+    PFN_vkResetDescriptorPool                    vkResetDescriptorPool {};
     PFN_vkFreeMemory                             vkFreeMemory {};
     PFN_vkGetBufferMemoryRequirements2           vkGetBufferMemoryRequirements2 {};
     PFN_vkGetBufferDeviceAddress                 vkGetBufferDeviceAddress {};
