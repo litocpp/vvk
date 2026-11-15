@@ -2,7 +2,16 @@
 // clang-format off
 module;
 
+#include <rstd/macro.hpp>
 #define VK_NO_PROTOTYPES
+#if RSTD_OS_WINDOWS
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#define VK_USE_PLATFORM_WIN32_KHR
+#elif RSTD_OS_LINUX
+#define VK_USE_PLATFORM_WAYLAND_KHR
+#define VK_USE_PLATFORM_XLIB_KHR
+#endif
 #include <vulkan/vulkan.h>
 
 #if (defined(VK_AMDX_dense_geometry_format))

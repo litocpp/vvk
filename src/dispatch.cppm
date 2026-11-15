@@ -39,6 +39,7 @@ struct DispatchError {
 struct InstanceCapabilities {
     rstd::uint32_t api_version { VK_API_VERSION_1_1 };
     bool           surface {}, debug_utils {}, portability_enumeration {};
+    bool           wayland_surface {}, xlib_surface {}, win32_surface {};
 };
 struct DeviceCapabilities {
     rstd::uint32_t api_version { VK_API_VERSION_1_1 };
@@ -69,25 +70,31 @@ struct GlobalDispatch {
 
 struct InstanceDispatch {
     PFN_vkGetPhysicalDeviceCooperativeMatrixPropertiesKHR
-                                             vkGetPhysicalDeviceCooperativeMatrixPropertiesKHR {};
-    VkInstance                               instance {};
-    PFN_vkGetInstanceProcAddr                resolver {};
-    InstanceCapabilities                     capabilities {};
-    PFN_vkDestroyInstance                    vkDestroyInstance {};
-    PFN_vkCreateDebugUtilsMessengerEXT       vkCreateDebugUtilsMessengerEXT {};
-    PFN_vkCreateDevice                       vkCreateDevice {};
-    PFN_vkDestroyDebugUtilsMessengerEXT      vkDestroyDebugUtilsMessengerEXT {};
-    PFN_vkDestroySurfaceKHR                  vkDestroySurfaceKHR {};
-    PFN_vkEnumerateDeviceExtensionProperties vkEnumerateDeviceExtensionProperties {};
-    PFN_vkEnumeratePhysicalDevices           vkEnumeratePhysicalDevices {};
-    PFN_vkGetPhysicalDeviceDescriptorSizeEXT vkGetPhysicalDeviceDescriptorSizeEXT {};
-    PFN_vkGetDeviceProcAddr                  vkGetDeviceProcAddr {};
-    PFN_vkGetPhysicalDeviceFeatures2         vkGetPhysicalDeviceFeatures2 {};
-    PFN_vkGetPhysicalDeviceFormatProperties  vkGetPhysicalDeviceFormatProperties {};
-    PFN_vkGetPhysicalDeviceMemoryProperties  vkGetPhysicalDeviceMemoryProperties {};
-    PFN_vkGetPhysicalDeviceMemoryProperties2 vkGetPhysicalDeviceMemoryProperties2 {};
-    PFN_vkGetPhysicalDeviceProperties        vkGetPhysicalDeviceProperties {};
-    PFN_vkGetPhysicalDeviceProperties2       vkGetPhysicalDeviceProperties2 {};
+                                        vkGetPhysicalDeviceCooperativeMatrixPropertiesKHR {};
+    VkInstance                          instance {};
+    PFN_vkGetInstanceProcAddr           resolver {};
+    InstanceCapabilities                capabilities {};
+    PFN_vkDestroyInstance               vkDestroyInstance {};
+    PFN_vkCreateDebugUtilsMessengerEXT  vkCreateDebugUtilsMessengerEXT {};
+    PFN_vkCreateDevice                  vkCreateDevice {};
+    PFN_vkDestroyDebugUtilsMessengerEXT vkDestroyDebugUtilsMessengerEXT {};
+    PFN_vkDestroySurfaceKHR             vkDestroySurfaceKHR {};
+#if RSTD_OS_WINDOWS
+    PFN_vkCreateWin32SurfaceKHR vkCreateWin32SurfaceKHR {};
+#elif RSTD_OS_LINUX
+    PFN_vkCreateWaylandSurfaceKHR vkCreateWaylandSurfaceKHR {};
+    PFN_vkCreateXlibSurfaceKHR    vkCreateXlibSurfaceKHR {};
+#endif
+    PFN_vkEnumerateDeviceExtensionProperties      vkEnumerateDeviceExtensionProperties {};
+    PFN_vkEnumeratePhysicalDevices                vkEnumeratePhysicalDevices {};
+    PFN_vkGetPhysicalDeviceDescriptorSizeEXT      vkGetPhysicalDeviceDescriptorSizeEXT {};
+    PFN_vkGetDeviceProcAddr                       vkGetDeviceProcAddr {};
+    PFN_vkGetPhysicalDeviceFeatures2              vkGetPhysicalDeviceFeatures2 {};
+    PFN_vkGetPhysicalDeviceFormatProperties       vkGetPhysicalDeviceFormatProperties {};
+    PFN_vkGetPhysicalDeviceMemoryProperties       vkGetPhysicalDeviceMemoryProperties {};
+    PFN_vkGetPhysicalDeviceMemoryProperties2      vkGetPhysicalDeviceMemoryProperties2 {};
+    PFN_vkGetPhysicalDeviceProperties             vkGetPhysicalDeviceProperties {};
+    PFN_vkGetPhysicalDeviceProperties2            vkGetPhysicalDeviceProperties2 {};
     PFN_vkGetPhysicalDeviceQueueFamilyProperties  vkGetPhysicalDeviceQueueFamilyProperties {};
     PFN_vkGetPhysicalDeviceQueueFamilyProperties2 vkGetPhysicalDeviceQueueFamilyProperties2 {};
     PFN_vkGetPhysicalDeviceSurfaceCapabilitiesKHR vkGetPhysicalDeviceSurfaceCapabilitiesKHR {};

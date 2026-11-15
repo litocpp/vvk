@@ -1,3 +1,6 @@
+module;
+#include <rstd/macro.hpp>
+
 module vvk;
 import rstd;
 using namespace rstd::prelude;
@@ -33,6 +36,12 @@ auto ParseInstanceCapabilities(const VkInstanceCreateInfo& info)
         info.enabledExtensionCount, info.ppEnabledExtensionNames, "VK_EXT_debug_utils");
     caps.portability_enumeration = HasExtension(
         info.enabledExtensionCount, info.ppEnabledExtensionNames, "VK_KHR_portability_enumeration");
+    caps.wayland_surface = HasExtension(
+        info.enabledExtensionCount, info.ppEnabledExtensionNames, "VK_KHR_wayland_surface");
+    caps.xlib_surface = HasExtension(
+        info.enabledExtensionCount, info.ppEnabledExtensionNames, "VK_KHR_xlib_surface");
+    caps.win32_surface = HasExtension(
+        info.enabledExtensionCount, info.ppEnabledExtensionNames, "VK_KHR_win32_surface");
     return Ok(caps);
 }
 auto ParseDeviceCapabilities(const VkDeviceCreateInfo& info, const InstanceCapabilities& parent,
@@ -237,6 +246,18 @@ auto LoadInstance(const GlobalDispatch& global, VkInstance instance, InstanceCap
     if (caps.surface) {
         LOAD(vkDestroySurfaceKHR);
     }
+#if RSTD_OS_WINDOWS
+    if (caps.win32_surface) {
+        LOAD(vkCreateWin32SurfaceKHR);
+    }
+#elif RSTD_OS_LINUX
+    if (caps.wayland_surface) {
+        LOAD(vkCreateWaylandSurfaceKHR);
+    }
+    if (caps.xlib_surface) {
+        LOAD(vkCreateXlibSurfaceKHR);
+    }
+#endif
     result.vkGetPhysicalDeviceDescriptorSizeEXT =
         reinterpret_cast<PFN_vkGetPhysicalDeviceDescriptorSizeEXT>(
             global.vkGetInstanceProcAddr(instance, "vkGetPhysicalDeviceDescriptorSizeEXT"));

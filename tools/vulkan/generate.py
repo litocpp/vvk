@@ -170,7 +170,21 @@ def guarded(guard, text):
 
 
 def partition(section, registry):
-    prefix = NOTICE + "module;\n\n#define VK_NO_PROTOTYPES\n#include <vulkan/vulkan.h>\n\n"
+    prefix = NOTICE + """module;
+
+#include <rstd/macro.hpp>
+#define VK_NO_PROTOTYPES
+#if RSTD_OS_WINDOWS
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#define VK_USE_PLATFORM_WIN32_KHR
+#elif RSTD_OS_LINUX
+#define VK_USE_PLATFORM_WAYLAND_KHR
+#define VK_USE_PLATFORM_XLIB_KHR
+#endif
+#include <vulkan/vulkan.h>
+
+"""
     exports = []
     if section != "constants":
         for guard, names in registry.export_groups(section):
