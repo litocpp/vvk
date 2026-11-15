@@ -27,16 +27,16 @@ version = "0.1.11"
 x11 = { module = "x11", usage = "compile", condition = 'target.os == "linux"' }
 
 [[test]]
-name = "vvk-memory-tests"
-sources = ["tests/main.cpp", "tests/memory.cpp", "tests/memory_vulkan.cpp", "tests/memory_import.cpp", "tests/dispatch.cpp", "tests/format.cpp"]
+name = "vvk-tests"
+sources = [
+  "tests/main.cpp",
+  "tests/dispatch.cpp",
+  "tests/format.cpp",
+  "tests/matrix.cpp",
+  "tests/memory.cpp",
+  "tests/memory_import.cpp",
+  "tests/memory_vulkan.cpp",
+]
 
 [dev-dependencies]
 rstd-test = { version = "0.1.11" }
-
-[[test]]
-name = "vvk-compute-tests"
-sources = ["tests/main.cpp", "tests/dispatch.cpp"]
-
-[[test]]
-name = "vvk-matrix-tests"
-sources = ["tests/main.cpp", "tests/matrix.cpp"]

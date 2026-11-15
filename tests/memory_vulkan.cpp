@@ -80,7 +80,7 @@ struct VulkanMemoryTest {
         const char*       layer_name = "VK_LAYER_KHRONOS_validation";
         const char*       extension  = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
         VkApplicationInfo application {
-            VK_STRUCTURE_TYPE_APPLICATION_INFO, nullptr, "vvk-memory-tests", 1, nullptr, 0, api
+            VK_STRUCTURE_TYPE_APPLICATION_INFO, nullptr, "vvk-tests", 1, nullptr, 0, api
         };
         VkInstanceCreateInfo info { VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO };
         info.pApplicationInfo = &application;
