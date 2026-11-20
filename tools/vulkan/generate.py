@@ -181,6 +181,8 @@ def partition(section, registry):
 #elif RSTD_OS_LINUX
 #define VK_USE_PLATFORM_WAYLAND_KHR
 #define VK_USE_PLATFORM_XLIB_KHR
+#elif RSTD_OS_MACOS
+#define VK_USE_PLATFORM_METAL_EXT
 #endif
 #include <vulkan/vulkan.h>
 

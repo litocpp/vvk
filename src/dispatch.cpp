@@ -42,6 +42,8 @@ auto ParseInstanceCapabilities(const VkInstanceCreateInfo& info)
         info.enabledExtensionCount, info.ppEnabledExtensionNames, "VK_KHR_xlib_surface");
     caps.win32_surface = HasExtension(
         info.enabledExtensionCount, info.ppEnabledExtensionNames, "VK_KHR_win32_surface");
+    caps.metal_surface = HasExtension(
+        info.enabledExtensionCount, info.ppEnabledExtensionNames, "VK_EXT_metal_surface");
     return Ok(caps);
 }
 auto ParseDeviceCapabilities(const VkDeviceCreateInfo& info, const InstanceCapabilities& parent,
@@ -256,6 +258,10 @@ auto LoadInstance(const GlobalDispatch& global, VkInstance instance, InstanceCap
     }
     if (caps.xlib_surface) {
         LOAD(vkCreateXlibSurfaceKHR);
+    }
+#elif RSTD_OS_MACOS
+    if (caps.metal_surface) {
+        LOAD(vkCreateMetalSurfaceEXT);
     }
 #endif
     result.vkGetPhysicalDeviceDescriptorSizeEXT =

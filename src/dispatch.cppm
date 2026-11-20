@@ -39,7 +39,7 @@ struct DispatchError {
 struct InstanceCapabilities {
     rstd::uint32_t api_version { VK_API_VERSION_1_1 };
     bool           surface {}, debug_utils {}, portability_enumeration {};
-    bool           wayland_surface {}, xlib_surface {}, win32_surface {};
+    bool           wayland_surface {}, xlib_surface {}, win32_surface {}, metal_surface {};
 };
 struct DeviceCapabilities {
     rstd::uint32_t api_version { VK_API_VERSION_1_1 };
@@ -84,6 +84,8 @@ struct InstanceDispatch {
 #elif RSTD_OS_LINUX
     PFN_vkCreateWaylandSurfaceKHR vkCreateWaylandSurfaceKHR {};
     PFN_vkCreateXlibSurfaceKHR    vkCreateXlibSurfaceKHR {};
+#elif RSTD_OS_MACOS
+    PFN_vkCreateMetalSurfaceEXT vkCreateMetalSurfaceEXT {};
 #endif
     PFN_vkEnumerateDeviceExtensionProperties      vkEnumerateDeviceExtensionProperties {};
     PFN_vkEnumeratePhysicalDevices                vkEnumeratePhysicalDevices {};
