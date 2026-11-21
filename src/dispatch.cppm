@@ -39,7 +39,8 @@ struct DispatchError {
 struct InstanceCapabilities {
     rstd::uint32_t api_version { VK_API_VERSION_1_1 };
     bool           surface {}, debug_utils {}, portability_enumeration {};
-    bool           wayland_surface {}, xlib_surface {}, win32_surface {}, metal_surface {};
+    bool           wayland_surface {}, xlib_surface {}, win32_surface {}, metal_surface {},
+        android_surface {};
 };
 struct DeviceCapabilities {
     rstd::uint32_t api_version { VK_API_VERSION_1_1 };
@@ -81,6 +82,8 @@ struct InstanceDispatch {
     PFN_vkDestroySurfaceKHR             vkDestroySurfaceKHR {};
 #if RSTD_OS_WINDOWS
     PFN_vkCreateWin32SurfaceKHR vkCreateWin32SurfaceKHR {};
+#elif __is_target_environment(android)
+    PFN_vkCreateAndroidSurfaceKHR vkCreateAndroidSurfaceKHR {};
 #elif RSTD_OS_LINUX
     PFN_vkCreateWaylandSurfaceKHR vkCreateWaylandSurfaceKHR {};
     PFN_vkCreateXlibSurfaceKHR    vkCreateXlibSurfaceKHR {};

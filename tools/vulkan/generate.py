@@ -178,6 +178,8 @@ def partition(section, registry):
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #define VK_USE_PLATFORM_WIN32_KHR
+#elif __is_target_environment(android)
+#define VK_USE_PLATFORM_ANDROID_KHR
 #elif RSTD_OS_LINUX
 #define VK_USE_PLATFORM_WAYLAND_KHR
 #define VK_USE_PLATFORM_XLIB_KHR

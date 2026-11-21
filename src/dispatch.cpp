@@ -44,6 +44,8 @@ auto ParseInstanceCapabilities(const VkInstanceCreateInfo& info)
         info.enabledExtensionCount, info.ppEnabledExtensionNames, "VK_KHR_win32_surface");
     caps.metal_surface = HasExtension(
         info.enabledExtensionCount, info.ppEnabledExtensionNames, "VK_EXT_metal_surface");
+    caps.android_surface = HasExtension(
+        info.enabledExtensionCount, info.ppEnabledExtensionNames, "VK_KHR_android_surface");
     return Ok(caps);
 }
 auto ParseDeviceCapabilities(const VkDeviceCreateInfo& info, const InstanceCapabilities& parent,
@@ -251,6 +253,10 @@ auto LoadInstance(const GlobalDispatch& global, VkInstance instance, InstanceCap
 #if RSTD_OS_WINDOWS
     if (caps.win32_surface) {
         LOAD(vkCreateWin32SurfaceKHR);
+    }
+#elif __is_target_environment(android)
+    if (caps.android_surface) {
+        LOAD(vkCreateAndroidSurfaceKHR);
     }
 #elif RSTD_OS_LINUX
     if (caps.wayland_surface) {

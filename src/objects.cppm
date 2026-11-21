@@ -99,6 +99,7 @@ class PhysicalDevice : public Handle<VkPhysicalDevice, NoOwnerLife, InstanceDisp
     using Handle<VkPhysicalDevice, NoOwnerLife, InstanceDispatch>::Handle;
 
 public:
+    rstd::uint32_t             EffectiveApiVersion() const noexcept;
     VkPhysicalDeviceProperties GetProperties() const noexcept;
     VkResult
     GetCooperativeMatrixPropertiesKHR(rstd::vec::Vec<VkCooperativeMatrixPropertiesKHR>&) const;
@@ -179,6 +180,10 @@ class Fence : public Handle<VkFence, VkDevice, DeviceDispatch> {
 
 public:
     VkResult Wait(rstd::uint64_t timeout = ~rstd::uint64_t(0)) const noexcept {
+        if (timeout == 0) {
+            auto result = GetStatus();
+            return result == VK_NOT_READY ? VK_TIMEOUT : result;
+        }
         return dld->vkWaitForFences(owner, 1, &handle, true, timeout);
     }
 

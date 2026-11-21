@@ -70,6 +70,8 @@ public:
     static auto Open() -> Result<VulkanLoader, LoaderError> {
 #if RSTD_OS_WINDOWS
         return Open(rstd::ffi::CStr::from_ptr("vulkan-1.dll"));
+#elif __is_target_environment(android)
+        return Open(rstd::ffi::CStr::from_ptr("libvulkan.so"));
 #elif RSTD_OS_MACOS
         return Open(rstd::ffi::CStr::from_ptr("libvulkan.1.dylib"));
 #else

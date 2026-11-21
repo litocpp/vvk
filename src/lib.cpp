@@ -450,6 +450,10 @@ VkPhysicalDeviceProperties PhysicalDevice::GetProperties() const noexcept {
     return props.properties;
 }
 
+rstd::uint32_t PhysicalDevice::EffectiveApiVersion() const noexcept {
+    return rstd::cmp::min(dld->capabilities.api_version, GetProperties().apiVersion);
+}
+
 void PhysicalDevice::GetProperties2KHR(VkPhysicalDeviceProperties2KHR& props) const noexcept {
     dld->vkGetPhysicalDeviceProperties2(handle, &props);
 }
