@@ -1,3 +1,15 @@
+<release version="0.1.3" date="2026-11-25">
+  <description>
+    <ul>
+      <li>Add Wayland, Xlib, Win32, Metal and Android surface dispatch.</li>
+      <li>Add Windows Vulkan loader support.</li>
+      <li>Add vkResetDescriptorPool to DeviceDispatch.</li>
+      <li>Add PhysicalDevice::EffectiveApiVersion.</li>
+      <li>Poll fence status for zero-timeout waits.</li>
+      <li>Require rstd 0.1.15 for Android dynamic loading.</li>
+    </ul>
+  </description>
+</release>
 <release version="0.1.2" date="2026-11-04">
   <description>
     <ul>
